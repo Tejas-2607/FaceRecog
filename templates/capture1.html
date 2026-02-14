@@ -1,0 +1,330 @@
+{% comment %} {% extends "base.html" %} {% block title %}Add User - Face Recognition System{%
+endblock %} {% block content %}
+<div class="page-container">
+  <!-- Back Button -->
+  <div class="back-button-container">
+    <a href="/" class="btn-back">← Back to Recognition</a>
+  </div>
+
+  <div class="capture-layout">
+    <!-- Left: Camera Preview -->
+    <div class="capture-video-section">
+      <h2>📸 Dataset Capture</h2>
+      <p class="subtitle">
+        Capture face images for building the recognition database
+      </p>
+
+      <div class="capture-video-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="canvas" style="display: none"></canvas>
+
+        <div class="capture-overlay">
+          <div class="capture-count" id="captureCount">0 / 50</div>
+          <div class="capture-status" id="captureStatus">Ready to capture</div>
+        </div>
+      </div>
+
+      <div class="preview-grid" id="previewGrid"></div>
+    </div>
+
+    <!-- Right: Controls -->
+    <div class="capture-controls-section">
+      <div class="control-card">
+        <h3>👤 Person Information</h3>
+        <div class="form-group">
+          <label>Person Name:</label>
+          <input
+            type="text"
+            id="personName"
+            placeholder="e.g., User1, Alice, Bob"
+            class="input-field"
+            autocomplete="off"
+          />
+          <p class="help-text">Use consistent naming (case-sensitive)</p>
+        </div>
+      </div>
+
+      <div class="control-card">
+        <h3>🎬 Capture Controls</h3>
+        <button id="startCaptureBtn" class="btn-large btn-primary" disabled>
+          ▶ Start Capture
+        </button>
+        <button
+          id="stopCaptureBtn"
+          class="btn-large btn-danger"
+          style="display: none"
+        >
+          ⏹ Stop Capture
+        </button>
+        <button
+          id="resetBtn"
+          class="btn-large btn-secondary"
+          style="display: none"
+        >
+          🔄 Reset & Start Over
+        </button>
+      </div>
+
+      <div class="control-card">
+        <h3>💡 Instructions</h3>
+        <ol class="instructions-list">
+          <li>Enter person's name above</li>
+          <li>Click "Start Capture"</li>
+          <li>Position your face in camera view</li>
+          <li>Move head slowly (left, right, up, down)</li>
+          <li>System captures 50 images automatically</li>
+          <li>Click "Stop" to end early</li>
+        </ol>
+      </div>
+
+      <div class="control-card">
+        <h3>📋 Tips</h3>
+        <div class="tips-compact">
+          <div class="tip-item">
+            💡 <strong>Lighting:</strong> Even, bright light
+          </div>
+          <div class="tip-item">
+            📐 <strong>Angles:</strong> Turn head slowly
+          </div>
+          <div class="tip-item">
+            😊 <strong>Expressions:</strong> Vary your face
+          </div>
+          <div class="tip-item">
+            👓 <strong>Accessories:</strong> With/without glasses
+          </div>
+        </div>
+      </div>
+
+      <div class="control-card">
+        <h3>✅ Next Steps</h3>
+        <p class="next-steps-text">After capturing:</p>
+        <ol class="next-steps-list">
+          <li>Click "🧠 Generate Embeddings" in navbar</li>
+          <li>Return to home page</li>
+          <li>Start recognition!</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block extra_js %}
+<script>
+  let webcamStream = null;
+  let capturing = false;
+  let captureInterval = null;
+  let captureCount = 0;
+  let maxCaptures = 50;
+  let personName = "";
+  let capturedImages = [];
+
+  // Release server camera first
+  async function releaseServerCamera() {
+    try {
+      await fetch("/api/release_camera", { method: "POST" });
+      console.log("Server camera released");
+    } catch (err) {
+      console.error("Failed to release server camera:", err);
+    }
+  }
+
+  // Initialize webcam
+  async function initWebcam() {
+    // First, release server camera
+    await releaseServerCamera();
+
+    // Small delay to ensure camera is released
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: 640,
+          height: 480,
+          facingMode: "user",
+        },
+      });
+
+      const video = document.getElementById("webcam");
+      video.srcObject = stream;
+      webcamStream = stream;
+
+      document.getElementById("captureStatus").textContent = "✓ Camera ready";
+      document.getElementById("captureStatus").style.color = "#10b981";
+    } catch (err) {
+      console.error("Camera error:", err);
+      document.getElementById("captureStatus").textContent =
+        "✗ Camera access denied - " + err.message;
+      document.getElementById("captureStatus").style.color = "#ef4444";
+      alert(
+        "Camera Error: " +
+          err.message +
+          "\n\nMake sure:\n1. Camera is not in use by another application\n2. You granted camera permission\n3. Server camera is released",
+      );
+    }
+  }
+
+  // Enable/disable start button based on name input
+  document.getElementById("personName").addEventListener("input", function () {
+    const name = this.value.trim();
+    document.getElementById("startCaptureBtn").disabled = !name;
+  });
+
+  // Start capture
+  document
+    .getElementById("startCaptureBtn")
+    .addEventListener("click", function () {
+      personName = document.getElementById("personName").value.trim();
+
+      if (!personName) {
+        alert("Please enter a person name");
+        return;
+      }
+
+      // Reset counters
+      captureCount = 0;
+      capturedImages = [];
+      document.getElementById("previewGrid").innerHTML = "";
+
+      // Update UI
+      capturing = true;
+      this.style.display = "none";
+      document.getElementById("stopCaptureBtn").style.display = "block";
+      document.getElementById("personName").disabled = true;
+      document.getElementById("captureStatus").textContent = "📸 Capturing...";
+      document.getElementById("captureStatus").style.color = "#f59e0b";
+
+      // Start capture interval
+      captureInterval = setInterval(captureFrame, 400); // Capture every 400ms
+    });
+
+  // Stop capture
+  document
+    .getElementById("stopCaptureBtn")
+    .addEventListener("click", function () {
+      stopCapture();
+    });
+
+  // Reset
+  document.getElementById("resetBtn").addEventListener("click", function () {
+    captureCount = 0;
+    capturedImages = [];
+    document.getElementById("previewGrid").innerHTML = "";
+    document.getElementById("captureCount").textContent = "0 / 50";
+    document.getElementById("personName").value = "";
+    document.getElementById("personName").disabled = false;
+    this.style.display = "none";
+    document.getElementById("startCaptureBtn").style.display = "block";
+    document.getElementById("startCaptureBtn").disabled = true;
+    document.getElementById("captureStatus").textContent = "Ready to capture";
+    document.getElementById("captureStatus").style.color = "#64748b";
+  });
+
+  // Capture frame
+  function captureFrame() {
+    if (!capturing || captureCount >= maxCaptures) {
+      if (captureCount >= maxCaptures) {
+        stopCapture();
+      }
+      return;
+    }
+
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    // Set canvas size
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Draw video frame to canvas
+    ctx.drawImage(video, 0, 0);
+
+    // Convert to blob
+    canvas.toBlob(
+      async function (blob) {
+        capturedImages.push(blob);
+        captureCount++;
+
+        // Update UI
+        document.getElementById("captureCount").textContent =
+          `${captureCount} / ${maxCaptures}`;
+
+        // Add preview
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(blob);
+        img.className = "preview-thumb";
+        document.getElementById("previewGrid").appendChild(img);
+
+        // Check if complete
+        if (captureCount >= maxCaptures) {
+          stopCapture();
+        }
+      },
+      "image/jpeg",
+      0.85,
+    );
+  }
+
+  // Stop capture
+  async function stopCapture() {
+    capturing = false;
+    clearInterval(captureInterval);
+
+    document.getElementById("stopCaptureBtn").style.display = "none";
+    document.getElementById("captureStatus").textContent =
+      "⏳ Saving images...";
+    document.getElementById("captureStatus").style.color = "#0ea5e9";
+
+    // Upload images
+    await uploadImages();
+  }
+
+  // Upload images to server
+  async function uploadImages() {
+    const formData = new FormData();
+    formData.append("person_name", personName);
+
+    capturedImages.forEach((blob, index) => {
+      formData.append(
+        "images",
+        blob,
+        `${index.toString().padStart(4, "0")}.jpg`,
+      );
+    });
+
+    try {
+      const response = await fetch("/api/upload_dataset", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        document.getElementById("captureStatus").textContent =
+          `✓ Saved ${data.count} images!`;
+        document.getElementById("captureStatus").style.color = "#10b981";
+        document.getElementById("resetBtn").style.display = "block";
+
+        alert(
+          `Success! Captured ${data.count} images for ${personName}.\n\nNext: Click "🧠 Generate Embeddings" in the navbar.`,
+        );
+      } else {
+        document.getElementById("captureStatus").textContent =
+          "✗ Upload failed";
+        document.getElementById("captureStatus").style.color = "#ef4444";
+        alert("Error: " + data.message);
+        document.getElementById("startCaptureBtn").style.display = "block";
+      }
+    } catch (err) {
+      document.getElementById("captureStatus").textContent = "✗ Upload error";
+      document.getElementById("captureStatus").style.color = "#ef4444";
+      alert("Failed to upload images");
+      document.getElementById("startCaptureBtn").style.display = "block";
+    }
+  }
+
+  // Initialize on load
+  initWebcam();
+</script>
+{% endblock %} {% endcomment %}

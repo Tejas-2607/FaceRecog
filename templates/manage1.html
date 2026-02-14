@@ -1,0 +1,187 @@
+{% extends "base.html" %} {% block title %}Manage Dataset - Face Recognition
+System{% endblock %} {% block content %}
+<div class="manage-page">
+  <h1>Dataset Management</h1>
+  <p class="subtitle">View and manage captured face datasets</p>
+
+  <div class="actions-bar">
+    <button id="refreshBtn" class="btn btn-secondary">🔄 Refresh</button>
+    <button id="regenerateBtn" class="btn btn-primary">
+      🧠 Regenerate Embeddings
+    </button>
+  </div>
+
+  <div id="statusMessage" class="status-message"></div>
+
+  <div class="dataset-grid" id="datasetGrid">
+    {% if persons %} {% for person in persons %}
+    <div class="person-card" data-person="{{ person.name }}">
+      <div class="person-header">
+        <h3>{{ person.name }}</h3>
+        <span class="image-count">{{ person.count }} images</span>
+      </div>
+      <div class="person-body">
+        <div class="person-icon">👤</div>
+        <p class="person-path">dataset/{{ person.name }}/</p>
+      </div>
+      <div class="person-actions">
+        <button
+          class="btn-small btn-danger"
+          onclick="deletePerson('{{ person.name }}')"
+        >
+          🗑️ Delete
+        </button>
+      </div>
+    </div>
+    {% endfor %} {% else %}
+    <div class="empty-state">
+      <div class="empty-icon">📁</div>
+      <h3>No Datasets Found</h3>
+      <p>Capture face images using the capture tool to get started.</p>
+      <a href="/capture" class="btn btn-primary">Start Capturing →</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="info-section">
+    <h3>Dataset Statistics</h3>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-number" id="totalPersons">{{ persons|length }}</div>
+        <div class="stat-label">Total Persons</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="totalImages">
+          {% set total = 0 %} {% for person in persons %} {% set total = total +
+          person.count %} {% endfor %} {{ total }}
+        </div>
+        <div class="stat-label">Total Images</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="avgImages">
+          {% if persons %} {% set total = 0 %} {% for person in persons %} {%
+          set total = total + person.count %} {% endfor %} {{ (total /
+          persons|length)|round|int }} {% else %} 0 {% endif %}
+        </div>
+        <div class="stat-label">Avg Images/Person</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-section">
+    <h3>⚙️ Dataset Guidelines</h3>
+    <ul class="guidelines">
+      <li>
+        <strong>Minimum Images:</strong> At least 30-50 images per person for
+        reliable recognition
+      </li>
+      <li>
+        <strong>Quality:</strong> Images should be well-lit with clear facial
+        features
+      </li>
+      <li>
+        <strong>Variety:</strong> Include different angles, expressions, and
+        lighting conditions
+      </li>
+      <li>
+        <strong>Naming:</strong> Use consistent naming (e.g., "User1", "John",
+        "Alice")
+      </li>
+      <li>
+        <strong>Regenerate:</strong> Always regenerate embeddings after
+        adding/deleting persons
+      </li>
+    </ul>
+  </div>
+</div>
+{% endblock %} {% block extra_js %}
+<script>
+  // Refresh page
+  document.getElementById("refreshBtn").addEventListener("click", function () {
+    location.reload();
+  });
+
+  // Regenerate embeddings
+  document
+    .getElementById("regenerateBtn")
+    .addEventListener("click", function () {
+      const btn = this;
+      const statusDiv = document.getElementById("statusMessage");
+
+      btn.disabled = true;
+      btn.textContent = "⏳ Generating...";
+      statusDiv.textContent = "Processing dataset images...";
+      statusDiv.className = "status-message info";
+
+      fetch("/api/generate_embeddings", {
+        method: "POST",
+      })
+        .then((response) => response.json())
+        .then((data) => {
+          btn.disabled = false;
+          btn.textContent = "🧠 Regenerate Embeddings";
+
+          if (data.success) {
+            statusDiv.textContent = `✓ ${data.message}`;
+            statusDiv.className = "status-message success";
+            setTimeout(() => {
+              statusDiv.textContent = "";
+            }, 5000);
+          } else {
+            statusDiv.textContent = `✗ ${data.message}`;
+            statusDiv.className = "status-message error";
+          }
+        })
+        .catch((error) => {
+          btn.disabled = false;
+          btn.textContent = "🧠 Regenerate Embeddings";
+          statusDiv.textContent = "✗ Error generating embeddings";
+          statusDiv.className = "status-message error";
+        });
+    });
+
+  // Delete person
+  function deletePerson(personName) {
+    if (
+      !confirm(
+        `Are you sure you want to delete all data for "${personName}"?\n\nThis will delete all captured images. This action cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    const statusDiv = document.getElementById("statusMessage");
+    statusDiv.textContent = `Deleting ${personName}...`;
+    statusDiv.className = "status-message info";
+
+    fetch(`/api/delete_person/${personName}`, {
+      method: "DELETE",
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          statusDiv.textContent = `✓ ${data.message}`;
+          statusDiv.className = "status-message success";
+
+          // Remove card from UI
+          const card = document.querySelector(`[data-person="${personName}"]`);
+          if (card) {
+            card.remove();
+          }
+
+          // Refresh page after 2 seconds
+          setTimeout(() => {
+            location.reload();
+          }, 2000);
+        } else {
+          statusDiv.textContent = `✗ ${data.message}`;
+          statusDiv.className = "status-message error";
+        }
+      })
+      .catch((error) => {
+        statusDiv.textContent = "✗ Error deleting person";
+        statusDiv.className = "status-message error";
+      });
+  }
+</script>
+{% endblock %}

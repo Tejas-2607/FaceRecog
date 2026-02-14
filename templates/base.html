@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Face Recognition System{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar-thin">
+        <div class="nav-container">
+            <h1 class="logo-small">🎥 Face Recognition</h1>
+            <ul class="nav-links-thin">
+                <li><a href="/capture" class="nav-btn">➕ Add User</a></li>
+                <li><a href="#" id="generateEmbBtn" class="nav-btn">🧠 Generate Embeddings</a></li>
+                <li><a href="/manage" class="nav-btn">⚙️ Manage Dataset</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    {% block content %}{% endblock %}
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const currentPath = window.location.pathname;
+            const navLinks = document.querySelectorAll('.nav-links-thin a');
+            navLinks.forEach(link => {
+                if (link.getAttribute('href') === currentPath) {
+                    link.classList.add('active');
+                }
+            });
+            
+            const generateBtn = document.getElementById('generateEmbBtn');
+            if (generateBtn) {
+                generateBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    if (confirm('Generate embeddings from dataset?')) {
+                        fetch('/api/generate_embeddings', { method: 'POST' })
+                            .then(res => res.json())
+                            .then(data => {
+                                alert(data.success ? '✓ ' + data.message : '✗ ' + data.message);
+                                if (data.success) location.reload();
+                            })
+                            .catch(err => alert('Error generating embeddings'));
+                    }
+                });
+            }
+        });
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

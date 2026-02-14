@@ -1,0 +1,20 @@
+# Face Recognition Surveillance System - Python Dependencies
+
+# Computer Vision
+opencv-python==4.8.1.78
+opencv-contrib-python==4.8.1.78
+
+# Face Recognition
+insightface==0.7.3
+onnxruntime==1.16.3
+
+# Machine Learning
+numpy==1.24.3
+scikit-learn==1.3.2
+
+# Web Framework
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# Utilities
+Pillow==10.1.0

@@ -1,0 +1,5 @@
+/venv
+/face_embeddings*.pkl
+/dataset
+/embeddings
+/snapshots

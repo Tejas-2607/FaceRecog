@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Face Recognition System{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>Welcome to Face Recognition System</h1>
+    <p class="subtitle">Intelligent Vision-Based Surveillance & Interaction Platform</p>
+</div>
+
+<div class="cards-grid">
+    <div class="card">
+        <div class="card-icon">📸</div>
+        <h3>1. Capture Dataset</h3>
+        <p>Capture face images for each person you want the system to recognize. Recommended: 50 images per person.</p>
+        <a href="/capture" class="btn btn-primary">Start Capture →</a>
+    </div>
+
+    <div class="card">
+        <div class="card-icon">🧠</div>
+        <h3>2. Generate Embeddings</h3>
+        <p>Process captured images to create face embeddings database for recognition.</p>
+        <button id="generateBtn" class="btn btn-secondary">Generate Embeddings</button>
+        <div id="embeddingStatus" class="status-message"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-icon">🔍</div>
+        <h3>3. Recognize Faces</h3>
+        <p>Use natural language commands to detect and identify people in the camera feed.</p>
+        <a href="/recognize" class="btn btn-primary">Start Recognition →</a>
+    </div>
+
+    <div class="card">
+        <div class="card-icon">⚙️</div>
+        <h3>4. Manage Dataset</h3>
+        <p>View, manage, and delete captured datasets for each person.</p>
+        <a href="/manage" class="btn btn-secondary">Manage Dataset →</a>
+    </div>
+</div>
+
+<div class="info-section">
+    <h2>System Status</h2>
+    <div class="status-grid">
+        <div class="status-item">
+            <span class="status-label">Embeddings Loaded:</span>
+            <span id="embeddingsStatus" class="status-value">Loading...</span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Total Persons:</span>
+            <span id="totalPersons" class="status-value">Loading...</span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Camera:</span>
+            <span id="cameraStatus" class="status-value">Loading...</span>
+        </div>
+    </div>
+</div>
+
+<div class="info-section">
+    <h2>How It Works</h2>
+    <div class="steps">
+        <div class="step">
+            <div class="step-number">1</div>
+            <div class="step-content">
+                <h4>Dataset Capture</h4>
+                <p>Capture multiple images of each person's face from different angles and lighting conditions.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-number">2</div>
+            <div class="step-content">
+                <h4>Embedding Generation</h4>
+                <p>Process images using InsightFace to create unique face embeddings for each person.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-number">3</div>
+            <div class="step-content">
+                <h4>Real-time Recognition</h4>
+                <p>Identify people in live camera feed and execute spatial queries like "person left of User1".</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="info-section">
+    <h2>Example Commands</h2>
+    <div class="command-examples">
+        <code>"detect the person right to User1"</code>
+        <code>"find second person on left of User1"</code>
+        <code>"show me first person right of User1"</code>
+        <code>"capture person left of User1"</code>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Load system status
+function loadStatus() {
+    fetch('/api/system_status')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('embeddingsStatus').textContent = 
+                data.embeddings_loaded ? `✓ Yes (${data.embeddings_count} faces)` : '✗ No';
+            document.getElementById('totalPersons').textContent = data.dataset_persons;
+            document.getElementById('cameraStatus').textContent = 
+                data.camera_active ? '✓ Active' : '○ Inactive';
+        })
+        .catch(error => {
+            console.error('Error loading status:', error);
+        });
+}
+
+// Generate embeddings
+document.getElementById('generateBtn').addEventListener('click', function() {
+    const btn = this;
+    const statusDiv = document.getElementById('embeddingStatus');
+    
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    statusDiv.textContent = 'Processing dataset...';
+    statusDiv.className = 'status-message info';
+    
+    fetch('/api/generate_embeddings', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.textContent = 'Generate Embeddings';
+        
+        if (data.success) {
+            statusDiv.textContent = `✓ ${data.message}`;
+            statusDiv.className = 'status-message success';
+            setTimeout(loadStatus, 500);
+        } else {
+            statusDiv.textContent = `✗ ${data.message}`;
+            statusDiv.className = 'status-message error';
+        }
+    })
+    .catch(error => {
+        btn.disabled = false;
+        btn.textContent = 'Generate Embeddings';
+        statusDiv.textContent = '✗ Error generating embeddings';
+        statusDiv.className = 'status-message error';
+    });
+});
+
+// Load status on page load
+loadStatus();
+setInterval(loadStatus, 5000); // Refresh every 5 seconds
+</script>
+{% endblock %}
