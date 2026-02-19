@@ -1,4 +1,5 @@
-{% extends "base.html" %} {% block title %}Live Recognition - Face Recognition System{% endblock %}
+{% extends "base.html" %}
+{% block title %}Live Recognition - Face Recognition System{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -38,7 +39,6 @@
     50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.10); }
   }
 
-  /* Mic button */
   .btn-mic {
     width: 42px;
     height: 42px;
@@ -53,7 +53,6 @@
     align-items: center;
     justify-content: center;
     transition: all 0.22s;
-    position: relative;
   }
 
   .btn-mic:hover {
@@ -73,7 +72,6 @@
     50%       { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(239,68,68,0); }
   }
 
-  /* Voice status bar */
   .voice-status-bar {
     display: none;
     align-items: center;
@@ -119,7 +117,6 @@
     color: #fff;
   }
 
-  /* Command buttons row */
   .command-buttons {
     display: flex;
     gap: 0.5rem;
@@ -159,7 +156,6 @@
     color: #fff;
   }
 
-  /* No speech support warning */
   .no-speech-note {
     font-size: 0.78rem;
     color: #64748b;
@@ -168,7 +164,6 @@
     display: none;
   }
 
-  /* Example chips */
   .command-examples-mini {
     margin-top: 1rem;
     padding-top: 0.9rem;
@@ -213,7 +208,6 @@
     color: #a5b4fc;
   }
 
-  /* Feedback box */
   .feedback-box {
     padding: 0.65rem 0.9rem;
     border-radius: 0.5rem;
@@ -234,10 +228,245 @@
     border: 1px solid rgba(239,68,68,0.3);
   }
 
-  /* Live transcript overlay on input */
-  .transcript-interim {
+  /* ── VERIFICATION MODAL ────────────────────────────────────────────── */
+  .verification-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    animation: fadeIn 0.3s;
+  }
+
+  .verification-modal.visible {
+    display: flex;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .modal-content {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    border: 2px solid #475569;
+    border-radius: 1.2rem;
+    max-width: 900px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 2rem;
+    animation: slideUp 0.3s;
+    position: relative;
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(50px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid rgba(71, 85, 105, 0.5);
+  }
+
+  .modal-title {
+    font-size: 1.75rem;
+    color: #fff;
+    font-weight: 700;
+  }
+
+  .btn-close-modal {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+    padding: 0.5rem 1rem;
+    border-radius: 0.6rem;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-weight: 700;
+  }
+
+  .btn-close-modal:hover {
+    background: #ef4444;
+    color: #fff;
+  }
+
+  .modal-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+
+  .snapshot-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .snapshot-preview h3 {
+    font-size: 1.2rem;
+    color: #cbd5e1;
+    margin-bottom: 0.5rem;
+  }
+
+  .snapshot-preview img {
+    width: 100%;
+    border-radius: 0.75rem;
+    border: 2px solid #475569;
+    background: #0f172a;
+  }
+
+  .verification-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .info-field {
+    background: rgba(15, 23, 42, 0.6);
+    padding: 1rem;
+    border-radius: 0.6rem;
+    border: 1px solid #334155;
+  }
+
+  .info-label {
+    font-size: 0.85rem;
     color: #64748b;
-    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+  }
+
+  .info-value {
+    font-size: 1.1rem;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-modal-action {
+    flex: 1;
+    min-width: 200px;
+    padding: 1rem 1.5rem;
+    border: none;
+    border-radius: 0.7rem;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.25s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+  }
+
+  .btn-save {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+  }
+
+  .btn-save:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(16, 185, 129, 0.5);
+  }
+
+  .btn-discard {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+  }
+
+  .btn-discard:hover {
+    background: #ef4444;
+    color: #fff;
+  }
+
+  /* Sketch generation UI */
+  .sketch-option {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(71, 85, 105, 0.5);
+  }
+
+  .sketch-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    color: #cbd5e1;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .sketch-checkbox-label input {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+  }
+
+  .sketch-preview {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 0.6rem;
+    text-align: center;
+  }
+
+  .sketch-preview img {
+    width: 100%;
+    max-height: 400px;
+    object-fit: contain;
+    border-radius: 0.5rem;
+    border: 2px solid #475569;
+    background: #fff;
+  }
+
+  .sketch-status {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+  }
+
+  .sketch-status.processing {
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+  }
+
+  .sketch-status.success {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+  }
+
+  .sketch-status.error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+  }
+
+  /* Responsive modal */
+  @media (max-width: 900px) {
+    .modal-body {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
 {% endblock %}
@@ -288,29 +517,26 @@
       <div class="command-input-wrapper">
         <label>Enter or speak a command:</label>
 
-        <!-- Input + Mic button on same row -->
         <div class="command-input-row">
           <input
             type="text"
             id="commandInput"
-            placeholder="detect person right to User1"
+            placeholder="detect User1  OR  find person right to User1"
             class="input-command"
             autocomplete="off"
             spellcheck="false"
           />
-          <button id="micBtn" class="btn-mic" title="Start voice input (click again or Cancel to stop)">
+          <button id="micBtn" class="btn-mic" title="Start voice input">
             🎤
           </button>
         </div>
 
-        <!-- Voice status bar (hidden until mic active) -->
         <div id="voiceStatusBar" class="voice-status-bar">
           <div class="voice-dot"></div>
           <span class="voice-status-text" id="voiceStatusText">Listening…</span>
           <button id="cancelVoiceBtn" class="btn-cancel-voice">✕ Cancel</button>
         </div>
 
-        <!-- Execute / Clear -->
         <div class="command-buttons">
           <button id="executeBtn" class="btn-primary-full">▶ Execute</button>
           <button id="clearBtn"   class="btn-secondary-full">✕ Clear</button>
@@ -318,22 +544,19 @@
 
         <div id="commandFeedback" class="feedback-box"></div>
 
-        <!-- No speech API note -->
         <p id="noSpeechNote" class="no-speech-note">
           ⚠ Voice input not supported in this browser. Use text instead.
         </p>
       </div>
 
-      <!-- Example commands -->
       <div class="command-examples-mini">
         <p class="example-label">Examples (click to use)</p>
         <div class="examples-grid">
-          <code class="example-cmd" data-cmd="detect person right to User1">detect person right to User1</code>
-          <code class="example-cmd" data-cmd="find person left of Alice">find person left of Alice</code>
-          <code class="example-cmd" data-cmd="identify who is right of Bob">identify who is right of Bob</code>
-          <code class="example-cmd" data-cmd="scan left side of John">scan left side of John</code>
+          <code class="example-cmd" data-cmd="detect User1">detect User1</code>
+          <code class="example-cmd" data-cmd="identify Alice">identify Alice</code>
+          <code class="example-cmd" data-cmd="find person right to User1">find person right to User1</code>
+          <code class="example-cmd" data-cmd="scan left side of Bob">scan left side of Bob</code>
           <code class="example-cmd" data-cmd="who is standing right of Sarah">who is standing right of Sarah</code>
-          <code class="example-cmd" data-cmd="show me someone to the left of Mike">show me someone to the left of Mike</code>
         </div>
       </div>
     </div>
@@ -393,6 +616,63 @@
 
   </div><!-- .controls-section -->
 </div><!-- .main-layout -->
+
+<!-- ═══ VERIFICATION MODAL ════════════════════════════════════════════ -->
+<div id="verificationModal" class="verification-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 class="modal-title">📸 Verify Snapshot</h2>
+      <button id="closeModal" class="btn-close-modal">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="snapshot-preview">
+        <h3>Captured Image</h3>
+        <img id="modalSnapshotImg" src="" alt="Captured snapshot" />
+      </div>
+
+      <div class="verification-info">
+        <div class="info-field">
+          <div class="info-label">Person Name</div>
+          <div class="info-value" id="modalPersonName">—</div>
+        </div>
+
+        <div class="info-field">
+          <div class="info-label">Position Context</div>
+          <div class="info-value" id="modalPositionText">—</div>
+        </div>
+
+        <div class="info-field">
+          <div class="info-label">Timestamp</div>
+          <div class="info-value" id="modalTimestamp">—</div>
+        </div>
+
+        <div class="sketch-option">
+          <label class="sketch-checkbox-label">
+            <input type="checkbox" id="createSketchCheck" />
+            <span>🎨 Generate sketch diagram</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button id="btnSaveSnapshot" class="btn-modal-action btn-save">
+        ✓ Save Verified Snapshot
+      </button>
+      <button id="btnDiscardSnapshot" class="btn-modal-action btn-discard">
+        ✗ Discard
+      </button>
+    </div>
+
+    <div id="sketchPreviewSection" class="sketch-preview" style="display:none">
+      <h3>✨ Generated Sketch</h3>
+      <img id="sketchPreviewImg" src="" alt="Sketch" />
+      <div id="sketchStatus" class="sketch-status"></div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -403,6 +683,7 @@
 let autoSnapshotEnabled  = true;
 let lastSnapshotTime     = 0;
 let currentCommand       = null;
+let pendingSnapshot      = null;  // Stores snapshot awaiting verification
 
 /* =====================================================================
    VOICE INPUT
@@ -412,7 +693,7 @@ const SpeechRecognition =
 
 let recognition   = null;
 let isRecording   = false;
-let voiceAborted  = false;   // true when user clicked Cancel
+let voiceAborted  = false;
 
 const micBtn          = document.getElementById('micBtn');
 const cancelVoiceBtn  = document.getElementById('cancelVoiceBtn');
@@ -422,7 +703,6 @@ const commandInput    = document.getElementById('commandInput');
 const noSpeechNote    = document.getElementById('noSpeechNote');
 
 if (!SpeechRecognition) {
-  // Browser doesn't support speech — hide mic, show note
   micBtn.style.display = 'none';
   noSpeechNote.style.display = 'block';
 } else {
@@ -432,11 +712,10 @@ if (!SpeechRecognition) {
 function setupSpeechRecognition() {
   recognition = new SpeechRecognition();
   recognition.lang            = 'en-US';
-  recognition.interimResults  = true;   // show live transcript
+  recognition.interimResults  = true;
   recognition.maxAlternatives = 1;
-  recognition.continuous      = false;  // single utterance per press
+  recognition.continuous      = false;
 
-  /* Live interim transcript → show in input as placeholder-style */
   recognition.onresult = (event) => {
     let interim   = '';
     let finalText = '';
@@ -453,44 +732,41 @@ function setupSpeechRecognition() {
     if (finalText) {
       commandInput.value = finalText.trim();
       voiceStatusText.textContent = `✓ Got: "${finalText.trim()}"`;
-      stopRecording(false);   // stop cleanly, keep text
+      stopRecording(false);
     } else if (interim) {
-      commandInput.value = interim;   // live preview
+      commandInput.value = interim;
       voiceStatusText.textContent = `Listening… "${interim}"`;
     }
   };
 
   recognition.onerror = (event) => {
-    if (voiceAborted) return;  // user cancelled — ignore error
+    if (voiceAborted) return;
     const msgs = {
-      'no-speech':        'No speech detected. Try again.',
-      'audio-capture':    'Microphone not found or blocked.',
-      'not-allowed':      'Microphone permission denied.',
-      'network':          'Network error during speech recognition.',
+      'no-speech':     'No speech detected. Try again.',
+      'audio-capture': 'Microphone not found or blocked.',
+      'not-allowed':   'Microphone permission denied.',
+      'network':       'Network error during speech recognition.',
     };
     voiceStatusText.textContent = msgs[event.error] || `Error: ${event.error}`;
     stopRecording(false);
   };
 
   recognition.onend = () => {
-    // onend fires even on abort — only clear input if user cancelled
-    if (voiceAborted) {
-      commandInput.value = '';
-    }
+    if (voiceAborted) commandInput.value = '';
     stopRecording(false);
   };
 }
 
 micBtn.addEventListener('click', () => {
   if (isRecording) {
-    stopRecording(true);   // stop = user clicked mic again to stop
+    stopRecording(true);
   } else {
     startRecording();
   }
 });
 
 cancelVoiceBtn.addEventListener('click', () => {
-  stopRecording(true, true);  // cancel = discard text
+  stopRecording(true, true);
 });
 
 function startRecording() {
@@ -505,11 +781,7 @@ function startRecording() {
   voiceStatusBar.classList.add('visible');
   voiceStatusText.textContent = 'Listening…';
 
-  try {
-    recognition.start();
-  } catch(e) {
-    // recognition already started — ignore
-  }
+  try { recognition.start(); } catch(e) {}
 }
 
 function stopRecording(userStopped = false, cancel = false) {
@@ -525,7 +797,6 @@ function stopRecording(userStopped = false, cancel = false) {
 
   try { recognition.abort(); } catch(e) {}
 
-  // Hide status bar after brief delay so user reads the result
   setTimeout(() => {
     voiceStatusBar.classList.remove('visible');
     voiceStatusText.textContent = 'Listening…';
@@ -578,7 +849,6 @@ document.getElementById('commandInput').addEventListener('keypress', e => {
   if (e.key === 'Enter') executeCommand();
 });
 
-/* Clear command */
 document.getElementById('clearBtn').addEventListener('click', () => {
   commandInput.value = '';
   document.getElementById('commandFeedback').textContent = '';
@@ -589,7 +859,6 @@ document.getElementById('clearBtn').addEventListener('click', () => {
   fetch('/api/clear_command', { method: 'POST' });
 });
 
-/* Click example → fill input */
 document.querySelectorAll('.example-cmd').forEach(el => {
   el.addEventListener('click', function() {
     commandInput.value = this.dataset.cmd;
@@ -623,7 +892,14 @@ function captureSnapshot() {
     .then(r => r.json())
     .then(data => {
       if (data.success) {
+        // Show in small preview
         showSnapshot(data.filename);
+        
+        // Open verification modal if auto-snapshot enabled
+        if (autoSnapshotEnabled && currentCommand) {
+          openVerificationModal(data.filename);
+        }
+        
         const ss = document.getElementById('snapshotStatus');
         ss.textContent = `✓ Saved: ${data.filename}`;
         ss.className   = 'status-text status-success';
@@ -638,6 +914,120 @@ function showSnapshot(filename) {
   document.getElementById('snapshotTime').textContent = new Date().toLocaleTimeString();
   document.getElementById('snapshotArea').style.display = 'block';
 }
+
+
+/* =====================================================================
+   VERIFICATION MODAL
+   ===================================================================== */
+const verificationModal  = document.getElementById('verificationModal');
+const modalSnapshotImg   = document.getElementById('modalSnapshotImg');
+const modalPersonName    = document.getElementById('modalPersonName');
+const modalPositionText  = document.getElementById('modalPositionText');
+const modalTimestamp     = document.getElementById('modalTimestamp');
+const createSketchCheck  = document.getElementById('createSketchCheck');
+const btnSaveSnapshot    = document.getElementById('btnSaveSnapshot');
+const btnDiscardSnapshot = document.getElementById('btnDiscardSnapshot');
+const sketchPreviewSection = document.getElementById('sketchPreviewSection');
+const sketchPreviewImg   = document.getElementById('sketchPreviewImg');
+const sketchStatus       = document.getElementById('sketchStatus');
+
+document.getElementById('closeModal').addEventListener('click', closeVerificationModal);
+
+function openVerificationModal(filename) {
+  if (!currentCommand) return;
+
+  pendingSnapshot = { filename: filename };
+
+  // Fill modal data
+  modalSnapshotImg.src = `/api/get_snapshot/${filename}`;
+  modalPersonName.textContent = currentCommand.reference_person || 'Unknown';
+  
+  // Build position text
+  let posText = '';
+  if (currentCommand.mode === 'single') {
+    posText = `Single detection of ${currentCommand.reference_person}`;
+  } else {
+    posText = `Person to the ${currentCommand.direction} of ${currentCommand.reference_person}`;
+  }
+  modalPositionText.textContent = posText;
+  
+  modalTimestamp.textContent = new Date().toLocaleString();
+  createSketchCheck.checked = false;
+  sketchPreviewSection.style.display = 'none';
+
+  verificationModal.classList.add('visible');
+}
+
+function closeVerificationModal() {
+  verificationModal.classList.remove('visible');
+  pendingSnapshot = null;
+}
+
+btnSaveSnapshot.addEventListener('click', async () => {
+  if (!pendingSnapshot) return;
+
+  const createSketch = createSketchCheck.checked;
+
+  const payload = {
+    temp_filename: pendingSnapshot.filename,
+    person_name: modalPersonName.textContent,
+    position_desc: modalPositionText.textContent,
+    create_sketch: createSketch
+  };
+
+  try {
+    // Show processing if sketch requested
+    if (createSketch) {
+      sketchPreviewSection.style.display = 'block';
+      sketchStatus.textContent = '⏳ Generating sketch...';
+      sketchStatus.className = 'sketch-status processing';
+    }
+
+    const response = await fetch('/api/verify_snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      alert(`✓ ${data.message}`);
+      
+      // Show sketch if generated
+      if (data.sketch_filename) {
+        sketchPreviewImg.src = `/api/get_snapshot/${data.sketch_filename}`;
+        sketchStatus.textContent = '✓ Sketch generated successfully!';
+        sketchStatus.className = 'sketch-status success';
+      }
+
+      setTimeout(() => {
+        closeVerificationModal();
+      }, createSketch ? 3000 : 500);
+    } else {
+      alert(`✗ ${data.message}`);
+    }
+  } catch (error) {
+    alert('✗ Error saving snapshot');
+    console.error(error);
+  }
+});
+
+btnDiscardSnapshot.addEventListener('click', async () => {
+  if (!pendingSnapshot) return;
+  if (!confirm('Discard this snapshot?')) return;
+
+  try {
+    await fetch('/api/discard_snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: pendingSnapshot.filename })
+    });
+    closeVerificationModal();
+  } catch (error) {
+    console.error('Discard error:', error);
+  }
+});
 
 
 /* =====================================================================
@@ -691,7 +1081,7 @@ setInterval(() => {
 
       updateDetectedFacesList(info.faces);
 
-      // Auto-snapshot when target is detected
+      // Auto-snapshot when target detected (will open verification modal)
       if (autoSnapshotEnabled && currentCommand &&
           info.target_detected && Date.now() - lastSnapshotTime > 5000) {
         captureSnapshot();

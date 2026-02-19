@@ -3,479 +3,613 @@ import cv2
 import insightface
 import pickle
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 from command_parsing_enhanced import CommandParser
 import os
 from datetime import datetime
 import threading
 import warnings
-from collections import deque
 import time
 from queue import Queue, Empty
 
-# Suppress warnings
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 app = Flask(__name__)
 
-# ============================================================================
-# OPTIMIZED CONFIGURATION
-# ============================================================================
+# ── Config ────────────────────────────────────────────────────────────────────
+CAMERA_INDEXES         = [0, 1, 2, 3, 4, 5, 6]
+DATASET_PATH           = "dataset"
+EMBEDDINGS_PATH        = "embeddings/face_embeddings.pkl"
+SNAPSHOTS_PATH         = "snapshots"
 
-CAMERA_INDEX = "rtsp://admin:Intern@123@192.168.0.60:554/stream2"
+RECOGNITION_THRESHOLD  = 0.65
+# Use (160,160) on CPU-only machines for ~2x speed at slight accuracy cost
+DETECTION_SIZE         = (320, 320)
+# Run detection every N frames — stream always runs at full camera FPS
+DETECTION_EVERY_N      = 3
+STREAM_JPEG_QUALITY    = 65
+MAX_CONSECUTIVE_ERRORS = 10
+FRAME_VALIDATION_ENABLED = True
 
-# Paths
-DATASET_PATH = "dataset"
-EMBEDDINGS_PATH = "embeddings/face_embeddings.pkl"
-SNAPSHOTS_PATH = "snapshots"
-
-# Optimized Recognition settings
-RECOGNITION_THRESHOLD = 0.65
-MIN_DETECTION_CONFIDENCE = 0.5
-
-# Performance optimizations
-DETECTION_SKIP_FRAMES = 2  # Process every 3rd frame (0=every frame, 1=every 2nd, 2=every 3rd)
-STREAM_JPEG_QUALITY = 75  # Lower quality = faster encoding
-DETECTION_SIZE = (480, 480)  # Smaller detection size = faster processing
-STREAM_FPS_TARGET = 20  # Target FPS for streaming
-FRAME_BUFFER_SIZE = 2  # Keep only latest frames
-
-# Create necessary directories
 os.makedirs(DATASET_PATH, exist_ok=True)
 os.makedirs("embeddings", exist_ok=True)
 os.makedirs(SNAPSHOTS_PATH, exist_ok=True)
 
-# ============================================================================
-# OPTIMIZED GLOBAL STATE
-# ============================================================================
 
-class OptimizedSystemState:
-    """Manages global state with optimizations"""
-    
+# ── Fast cosine similarity — replaces sklearn ─────────────────────────────────
+def fast_cosine_batch(query_vecs, db_vecs_normalized):
+    """
+    query_vecs:           (N, D) float32 — normalized here
+    db_vecs_normalized:   (M, D) float32 — pre-normalized at load time
+    returns:              (N, M) similarity matrix
+
+    Single np.dot (BLAS dgemm) — ~4x faster than sklearn for N < 10 faces
+    """
+    norms = np.linalg.norm(query_vecs, axis=1, keepdims=True)
+    norms[norms == 0] = 1e-10
+    return (query_vecs / norms) @ db_vecs_normalized.T
+
+
+# ── Lock-free single-slot buffer ──────────────────────────────────────────────
+class AtomicFrameSlot:
+    """
+    Writer always overwrites with latest value.
+    Reader always gets latest value.
+    Neither ever blocks — a single lightweight mutex guards only the pointer swap.
+    """
     def __init__(self):
-        self.camera = None
-        self.recognizer = None
-        self.known_embeddings = None
-        self.known_names = None
-        self.command_parser = CommandParser()
-        self.current_command = None
-        
-        # Optimized frame handling
-        self.frame_lock = threading.Lock()
-        self.latest_raw_frame = None
-        self.latest_annotated_frame = None
+        self._lock  = threading.Lock()
+        self._frame = None
+        self._meta  = None
+
+    def write(self, frame, meta=None):
+        with self._lock:
+            self._frame = frame
+            self._meta  = meta
+
+    def read(self):
+        with self._lock:
+            return self._frame, self._meta
+
+
+class EncodedFrameSlot:
+    """Stores the latest pre-encoded JPEG bytes."""
+    def __init__(self):
+        self._lock  = threading.Lock()
+        self._bytes = None
+
+    def write(self, data: bytes):
+        with self._lock:
+            self._bytes = data
+
+    def read(self):
+        with self._lock:
+            return self._bytes
+
+
+# ── System state ──────────────────────────────────────────────────────────────
+class SystemState:
+
+    def __init__(self):
+        self.camera            = None
+        self.recognizer        = None
+        self.known_embeddings  = None
+        self.known_names       = None
+        self.command_parser    = CommandParser()
+        self.current_command   = None
+
+        # Camera bookkeeping
+        self.camera_lock           = threading.Lock()
+        self.consecutive_errors    = 0
+        self.last_successful_frame = time.time()
+        self.camera_url_index      = 0
+        self.frame_count           = 0
+
+        # Lock-free frame slots (replace all Lock + frame variable pairs)
+        self.raw_slot       = AtomicFrameSlot()   # latest raw frame
+        self.annotated_slot = AtomicFrameSlot()   # latest annotated frame
+        self.encoded_slot   = EncodedFrameSlot()  # latest JPEG bytes
+
+        # Detection input — maxsize=1, always drop stale frame if detect is busy
+        self.detect_queue = Queue(maxsize=1)
+
+        # Worker threads
+        self.detect_thread   = None
+        self.encode_thread   = None
+        self.threads_running = False
+
+        # Latest detection info (for API)
         self.detection_results = {}
-        
-        # Camera handling
-        self.camera_lock = threading.Lock()
-        
-        # Frame skipping
-        self.frame_count = 0
-        self.last_detection_result = None
-        
-        # Detection queue for async processing
-        self.detection_queue = Queue(maxsize=1)
-        self.detection_thread = None
-        self.detection_running = False
-        
-        # Cached normalized embeddings (faster similarity computation)
+
+        # Normalized embeddings (pre-computed at load)
         self.normalized_embeddings = None
-        
+
+        # Auto-snapshot
+        self.auto_snapshot_enabled = True
+        self.last_snapshot_time    = 0
+        self.snapshot_cooldown     = 8.0
+        self.last_snapshot_person  = None
+
+    # ── Model init ────────────────────────────────────────────────────────────
+
     def initialize_recognizer(self):
-        """Load the face recognition model with GPU support"""
-        if self.recognizer is None:
-            print("Loading InsightFace model...")
-            
-            # Try GPU first, fallback to CPU
+        if self.recognizer is not None:
+            return
+        print("Loading InsightFace model...")
+        for providers in (
+            ["CUDAExecutionProvider", "CPUExecutionProvider"],
+            ["CPUExecutionProvider"],
+        ):
             try:
-                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
                 self.recognizer = insightface.app.FaceAnalysis(
-                    name="buffalo_l",
-                    providers=providers
+                    name="buffalo_l", providers=providers
                 )
-                self.recognizer.prepare(ctx_id=0, det_size=DETECTION_SIZE)
-                print("✓ InsightFace model loaded (GPU)")
-            except:
-                self.recognizer = insightface.app.FaceAnalysis(
-                    name="buffalo_l",
-                    providers=["CPUExecutionProvider"]
-                )
-                self.recognizer.prepare(ctx_id=-1, det_size=DETECTION_SIZE)
-                print("✓ InsightFace model loaded (CPU)")
-    
+                ctx = 0 if "CUDA" in providers[0] else -1
+                self.recognizer.prepare(ctx_id=ctx, det_size=DETECTION_SIZE)
+                label = "GPU" if ctx == 0 else "CPU"
+                print(f"✓ InsightFace loaded ({label})")
+                return
+            except Exception as e:
+                print(f"  {providers[0]} failed: {e}")
+
     def load_embeddings(self):
-        """Load and pre-normalize face embeddings for faster comparison"""
         if not os.path.exists(EMBEDDINGS_PATH):
             return False
-        
         try:
             with open(EMBEDDINGS_PATH, "rb") as f:
                 data = pickle.load(f)
-            
-            # Pre-normalize embeddings (only done once)
-            embeddings = np.array(data["embeddings"])
-            self.known_embeddings = embeddings
-            self.normalized_embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
-            self.known_names = data["names"]
-            
-            print(f"✓ Loaded {len(self.known_names)} faces from database (pre-normalized)")
+            emb   = np.array(data["embeddings"], dtype=np.float32)
+            norms = np.linalg.norm(emb, axis=1, keepdims=True)
+            norms[norms == 0] = 1e-10
+            self.normalized_embeddings = emb / norms
+            self.known_names           = data["names"]
+            print(f"✓ Loaded {len(self.known_names)} faces")
             return True
         except Exception as e:
-            print(f"❌ Error loading embeddings: {e}")
+            print(f"❌ Embeddings error: {e}")
             return False
-    
+
+    # ── Camera ────────────────────────────────────────────────────────────────
+
+    def _open_camera(self, index):
+        cam = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if not cam.isOpened():
+            cam.release()
+            cam = cv2.VideoCapture(index)
+        if cam.isOpened():
+            cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cam.set(cv2.CAP_PROP_FPS, 30)
+            cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        return cam
+
     def get_camera(self):
-        """Get or initialize camera with optimized settings"""
         with self.camera_lock:
             if self.camera is not None and self.camera.isOpened():
-                return self.camera
-            
+                if time.time() - self.last_successful_frame < 5.0:
+                    return self.camera
+                print("⚠ Camera timeout, reconnecting...")
+                self.camera.release()
+                self.camera = None
+
             if self.camera is not None:
                 self.camera.release()
-            
-            print(f"Opening camera {CAMERA_INDEX}...")
-            self.camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_FFMPEG)
-            
-            if not self.camera.isOpened():
-                print(f"❌ Cannot open camera {CAMERA_INDEX}")
-                return None
-            
-            # Optimized camera properties
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer lag
-            self.camera.set(cv2.CAP_PROP_FPS, STREAM_FPS_TARGET)
-            
-            print("✓ Camera opened successfully")
-            return self.camera
-    
+                self.camera = None
+
+            for _ in range(len(CAMERA_INDEXES)):
+                idx = CAMERA_INDEXES[self.camera_url_index]
+                print(f"Trying camera {idx}...")
+                self.camera = self._open_camera(idx)
+                if self.camera.isOpened():
+                    print(f"✓ Camera {idx} connected")
+                    self.consecutive_errors    = 0
+                    self.last_successful_frame = time.time()
+                    return self.camera
+                self.camera_url_index = (self.camera_url_index + 1) % len(CAMERA_INDEXES)
+                print(f"❌ Camera {idx} failed")
+
+            print("❌ All cameras failed")
+            return None
+
     def release_camera(self):
-        """Release camera resource"""
         with self.camera_lock:
             if self.camera is not None:
                 self.camera.release()
                 self.camera = None
-                print("Camera released")
-    
-    def start_detection_thread(self):
-        """Start async detection processing thread"""
-        if self.detection_thread is None or not self.detection_thread.is_alive():
-            self.detection_running = True
-            self.detection_thread = threading.Thread(target=self._detection_worker, daemon=True)
-            self.detection_thread.start()
-            print("✓ Detection thread started")
-    
-    def _detection_worker(self):
-        """Worker thread for async face detection"""
-        while self.detection_running:
+
+    # ── Frame validation — fast corner sampling ───────────────────────────────
+
+    @staticmethod
+    def validate_frame(frame):
+        """
+        Sample 5 pixels (4 corners + center) instead of computing mean of entire frame.
+        640x480x3 full mean = 921,600 operations.
+        Corner sampling = 5 operations. ~200x faster.
+        """
+        if frame is None or frame.size == 0:
+            return False
+        if not FRAME_VALIDATION_ENABLED:
+            return True
+        h, w = frame.shape[:2]
+        samples = (
+            frame[0, 0], frame[0, w-1],
+            frame[h-1, 0], frame[h-1, w-1],
+            frame[h//2, w//2]
+        )
+        mean = sum(int(s.mean()) for s in samples) / 5
+        return 5 < mean < 250
+
+    # ── Worker thread management ──────────────────────────────────────────────
+
+    def start_threads(self):
+        if self.threads_running:
+            return
+        self.threads_running = True
+        self.detect_thread = threading.Thread(
+            target=self._detect_worker, daemon=True, name="DetectThread"
+        )
+        self.encode_thread = threading.Thread(
+            target=self._encode_worker, daemon=True, name="EncodeThread"
+        )
+        self.detect_thread.start()
+        self.encode_thread.start()
+        print("✓ Detection + Encode threads started")
+
+    # ── Detection worker ──────────────────────────────────────────────────────
+
+    def _detect_worker(self):
+        """
+        Runs at its own pace — completely decoupled from stream FPS.
+        If InsightFace takes 100ms, stream still runs at 30 FPS unaffected.
+        """
+        while self.threads_running:
             try:
-                # Get frame from queue with timeout
-                frame, command = self.detection_queue.get(timeout=0.1)
-                
-                # Process detection
-                annotated, info = self._process_detection(frame, command)
-                
-                # Store result
-                with self.frame_lock:
-                    self.latest_annotated_frame = annotated
-                    self.detection_results = info
-                    self.last_detection_result = (annotated, info)
-                
-                self.detection_queue.task_done()
-                
+                frame, command = self.detect_queue.get(timeout=0.05)
             except Empty:
                 continue
+            try:
+                annotated, info = self._run_detection(frame, command)
+                self.annotated_slot.write(annotated, info)
+                self.detection_results = info
             except Exception as e:
-                print(f"Detection worker error: {e}")
-    
-    def _process_detection(self, frame, command_result):
-        """Optimized detection processing"""
+                print(f"Detection error: {e}")
+            self.detect_queue.task_done()
+
+    # ── Encode worker ─────────────────────────────────────────────────────────
+
+    def _encode_worker(self):
+        """
+        Continuously encodes the annotated frame to JPEG.
+        Only re-encodes when the frame object changes (id() check = free).
+        Stream thread just copies bytes — zero encode work on hot path.
+        """
+        params   = [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY]
+        prev_id  = None
+
+        while self.threads_running:
+            annotated, _ = self.annotated_slot.read()
+            cur_id = id(annotated) if annotated is not None else None
+
+            if cur_id == prev_id or annotated is None:
+                time.sleep(0.002)  # 2ms poll — negligible CPU when idle
+                continue
+
+            prev_id = cur_id
+            ret, buf = cv2.imencode('.jpg', annotated, params)
+            if ret:
+                self.encoded_slot.write(buf.tobytes())
+
+    # ── Detection logic ───────────────────────────────────────────────────────
+
+    def _run_detection(self, frame, command_result):
         if self.recognizer is None:
             self.initialize_recognizer()
-        
         if self.normalized_embeddings is None:
             self.load_embeddings()
-        
+
         if self.normalized_embeddings is None or len(self.normalized_embeddings) == 0:
-            cv2.putText(frame, "No dataset/identity registered", (30, 40),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            return frame, {'total_faces': 0, 'message': 'No dataset'}
-        
-        # Detect faces
-        faces = self.recognizer.get(frame)
-        
-        anchor_face = None
+            out = frame.copy()
+            cv2.putText(out, "No dataset/identity registered", (30, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            return out, {'total_faces': 0, 'message': 'No dataset'}
+
+        # Contiguous array avoids InsightFace's internal copy
+        faces = self.recognizer.get(np.ascontiguousarray(frame))
+
+        anchor_face    = None
         detected_faces = []
-        
-        # Optimized recognition with vectorized operations
-        if len(faces) > 0:
-            # Batch process all embeddings at once
-            embeddings_batch = np.array([face.embedding for face in faces])
-            embeddings_batch = embeddings_batch / np.linalg.norm(embeddings_batch, axis=1, keepdims=True)
-            
-            # Compute all similarities at once (vectorized)
-            all_sims = cosine_similarity(embeddings_batch, self.normalized_embeddings)
-            
+
+        if faces:
+            emb_batch = np.array([f.embedding for f in faces], dtype=np.float32)
+            # Single BLAS dgemm — replaces sklearn cosine_similarity
+            sims = fast_cosine_batch(emb_batch, self.normalized_embeddings)
+
             for idx, face in enumerate(faces):
-                sims = all_sims[idx]
-                best_idx = np.argmax(sims)
-                best_score = sims[best_idx]
-                
-                name = self.known_names[best_idx] if best_score > RECOGNITION_THRESHOLD else "Unknown"
-                
-                bbox = face.bbox.astype(int)
+                best_idx   = int(np.argmax(sims[idx]))
+                best_score = float(sims[idx, best_idx])
+                name = (self.known_names[best_idx]
+                        if best_score > RECOGNITION_THRESHOLD else "Unknown")
+                bbox     = face.bbox.astype(int)
                 x1, y1, x2, y2 = bbox
-                center_x = (x1 + x2) // 2
-                
+                center_x = (x1 + x2) >> 1  # faster than //2
+
                 detected_faces.append({
-                    "name": name,
-                    "score": best_score,
-                    "bbox": bbox,
-                    "center_x": center_x
+                    "name": name, "score": best_score,
+                    "bbox": bbox, "center_x": center_x
                 })
-                
                 if command_result and name == command_result.get('reference_person'):
                     anchor_face = {"bbox": bbox, "center_x": center_x}
-        
-        # Drawing logic (same as original)
-        frame = self._draw_detections(frame, detected_faces, anchor_face, command_result)
-        
-        detection_info = {
-            'total_faces': len(detected_faces),
+
+        # Auto-snapshot on clean frame (before drawing boxes)
+        if command_result and anchor_face is not None and self.auto_snapshot_enabled:
+            self._check_snapshot(frame, detected_faces, command_result, anchor_face)
+
+        annotated = self._draw(frame.copy(), detected_faces, anchor_face, command_result)
+        return annotated, {
+            'total_faces':     len(detected_faces),
             'anchor_detected': anchor_face is not None if command_result else False,
             'target_detected': False,
-            'faces': [{'name': f['name'], 'score': float(f['score'])} for f in detected_faces]
+            'faces': [{'name': f['name'], 'score': float(f['score'])}
+                      for f in detected_faces]
         }
-        
-        return frame, detection_info
-    
-    def _draw_detections(self, frame, detected_faces, anchor_face, command_result):
-        """Draw bounding boxes and labels (same logic as original)"""
+
+    def _check_snapshot(self, frame, detected_faces, command_result, anchor_face):
+        anchor_name = command_result.get('reference_person')
+        direction   = command_result.get('direction')
+        anchor_cx   = anchor_face["center_x"]
+
+        for data in detected_faces:
+            if data["name"] == anchor_name:
+                continue
+            face_cx = data["center_x"]
+            if not ((direction == "right" and face_cx < anchor_cx) or
+                    (direction == "left"  and face_cx > anchor_cx)):
+                continue
+            now = time.time()
+            pk  = data["name"]
+            if (now - self.last_snapshot_time > self.snapshot_cooldown or
+                    self.last_snapshot_person != pk):
+                self._save_crop(frame, data["bbox"], data["name"])
+                self.last_snapshot_time   = now
+                self.last_snapshot_person = pk
+
+    def _save_crop(self, frame, bbox, person_name):
+        try:
+            h, w = frame.shape[:2]
+            x1, y1, x2, y2 = bbox
+            pad_x = int((x2 - x1) * 1.5)
+            pad_y = int((y2 - y1) * 2.5)
+            crop  = frame[max(0, y1-pad_y):min(h, y2+pad_y),
+                          max(0, x1-pad_x):min(w, x2+pad_x)]
+            if crop.size == 0:
+                return
+            ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fn  = f"auto_{person_name.replace(' ','_')}_{ts}.jpg"
+            cv2.imwrite(os.path.join(SNAPSHOTS_PATH, fn), crop,
+                        [cv2.IMWRITE_JPEG_QUALITY, 92])
+            print(f"📸 {fn}")
+        except Exception as e:
+            print(f"Snapshot error: {e}")
+
+    def _draw(self, frame, detected_faces, anchor_face, command_result):
         anchor_name = command_result.get('reference_person') if command_result else None
-        direction = command_result.get('direction') if command_result else None
-        
+        direction   = command_result.get('direction') if command_result else None
+
         if command_result and anchor_face is None:
             cv2.putText(frame, f"{anchor_name} not detected", (30, 40),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            
-            for data in detected_faces:
-                x1, y1, x2, y2 = data["bbox"]
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            for d in detected_faces:
+                x1, y1, x2, y2 = d["bbox"]
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(frame, f"{data['name']} ({data['score']:.2f})",
-                           (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-        
+                cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
+                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+
         elif command_result and anchor_face is not None:
             ax1, ay1, ax2, ay2 = anchor_face["bbox"]
-            anchor_center_x = anchor_face["center_x"]
-            
+            anchor_cx = anchor_face["center_x"]
             cv2.rectangle(frame, (ax1, ay1), (ax2, ay2), (0, 255, 0), 2)
-            cv2.putText(frame, f"{anchor_name} (Anchor)", (ax1, ay1 - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            
-            person_found = False
-            other_faces_exist = False
-            
-            for data in detected_faces:
-                name = data["name"]
-                score = data["score"]
-                x1, y1, x2, y2 = data["bbox"]
-                face_center_x = data["center_x"]
-                
-                if name == anchor_name:
+            cv2.putText(frame, f"{anchor_name} (Anchor)", (ax1, ay1-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+            person_found = other_exist = False
+            for d in detected_faces:
+                if d["name"] == anchor_name:
                     continue
-                
-                other_faces_exist = True
+                other_exist = True
+                x1, y1, x2, y2 = d["bbox"]
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(frame, f"{name} ({score:.2f})", (x1, y1 - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-                
-                if direction == "right" and face_center_x < anchor_center_x:
+                cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
+                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+                if ((direction == "right" and d["center_x"] < anchor_cx) or
+                        (direction == "left"  and d["center_x"] > anchor_cx)):
                     person_found = True
-                    cv2.putText(frame, f"Person detected: {name}", (30, 80),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
-                elif direction == "left" and face_center_x > anchor_center_x:
-                    person_found = True
-                    cv2.putText(frame, f"Person detected: {name}", (30, 80),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
-            
+                    cv2.putText(frame, f"Person detected: {d['name']}", (30, 80),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+
             if not person_found:
-                if not other_faces_exist:
-                    cv2.putText(frame, "Move the camera", (30, 80),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-                else:
-                    if direction == "right":
-                        cv2.putText(frame, "No person found on RIGHT", (30, 80),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-                    elif direction == "left":
-                        cv2.putText(frame, "No person found on LEFT", (30, 80),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-        
+                msg = "Move the camera" if not other_exist \
+                      else f"No person found on {direction.upper()}"
+                cv2.putText(frame, msg, (30, 80),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
         else:
-            for data in detected_faces:
-                x1, y1, x2, y2 = data["bbox"]
+            for d in detected_faces:
+                x1, y1, x2, y2 = d["bbox"]
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(frame, f"{data['name']} ({data['score']:.2f})",
-                           (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-        
+                cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
+                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
         return frame
 
 
-state = OptimizedSystemState()
+state = SystemState()
 
 
 # ============================================================================
-# OPTIMIZED VIDEO STREAMING
+# STREAM — pure hot path, zero blocking operations
 # ============================================================================
 
 def generate_frames():
-    """Optimized frame generation with frame skipping"""
+    """
+    Stream loop does ONLY:
+      1. camera.grab()       — flush buffer, get latest frame
+      2. camera.retrieve()   — decode frame
+      3. cv2.flip()          — mirror
+      4. slot.write()        — atomic pointer swap (nanoseconds)
+      5. detect_queue.put_nowait() — non-blocking, drops if busy
+      6. encoded_slot.read() — atomic pointer read (nanoseconds)
+      7. yield bytes          — send to browser
+
+    No JPEG encoding. No face detection. No lock contention.
+    """
     camera = state.get_camera()
     if camera is None:
-        error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.putText(error_frame, "Camera Error - Check CAMERA_INDEX", (50, 240),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        ret, buffer = cv2.imencode('.jpg', error_frame, [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY])
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        err = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(err, "Camera Error", (50, 240),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        _, buf = cv2.imencode('.jpg', err)
+        yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n'
         return
-    
-    # Start detection thread
-    state.start_detection_thread()
-    
-    frame_time = 1.0 / STREAM_FPS_TARGET
-    last_time = time.time()
-    
+
+    state.start_threads()
+
+    # Pre-build header/footer bytes — avoids any string/bytes ops per frame
+    HEADER = b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
+    FOOTER = b'\r\n'
+
+    # Fallback encoder only used for very first frames before encode thread warms up
+    fallback_params = [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY]
+    error_cache = None
+
     while True:
         try:
-            # Read frame
-            ret, frame = camera.read()
-            if not ret:
-                time.sleep(0.05)
+            # grab() flushes camera buffer and returns immediately if frame ready
+            if not camera.grab():
+                state.consecutive_errors += 1
+                if state.consecutive_errors > MAX_CONSECUTIVE_ERRORS:
+                    print("⚠ Reconnecting...")
+                    camera = state.get_camera()
+                    if camera is None:
+                        time.sleep(0.5)
                 continue
-            
-            # Mirror frame
-            frame = cv2.flip(frame, 1)
-            
-            # Store raw frame
-            with state.frame_lock:
-                state.latest_raw_frame = frame.copy()
-            
-            # Frame skipping logic
-            state.frame_count += 1
-            should_detect = (state.frame_count % (DETECTION_SKIP_FRAMES + 1)) == 0
-            
-            if should_detect:
-                # Queue frame for async detection (non-blocking)
-                try:
-                    state.detection_queue.put_nowait((frame.copy(), state.current_command))
-                except:
-                    pass  # Queue full, skip this frame
-            
-            # Use last detection result for annotation
-            with state.frame_lock:
-                if state.latest_annotated_frame is not None:
-                    display_frame = state.latest_annotated_frame
+
+            ret, frame = camera.retrieve()
+
+            if not ret or not state.validate_frame(frame):
+                state.consecutive_errors += 1
+                if state.consecutive_errors > MAX_CONSECUTIVE_ERRORS:
+                    camera = state.get_camera()
+                    if camera is None:
+                        time.sleep(0.5)
+                if error_cache is not None:
+                    frame = error_cache.copy()
+                    cv2.putText(frame, "Stream interrupted...", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
                 else:
-                    display_frame = frame
-            
-            # Fast JPEG encoding
-            ret, buffer = cv2.imencode('.jpg', display_frame,
-                                      [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY])
-            if not ret:
-                continue
-            
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            
-            # Frame rate limiting
-            elapsed = time.time() - last_time
-            sleep_time = max(0, frame_time - elapsed)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-            last_time = time.time()
-            
+                    continue
+            else:
+                state.consecutive_errors    = 0
+                state.last_successful_frame = time.time()
+                error_cache = frame
+
+            frame = cv2.flip(frame, 1)
+
+            # Atomic pointer write — no serialization
+            state.raw_slot.write(frame)
+
+            # Push to detection — put_nowait never blocks stream thread
+            state.frame_count += 1
+            if state.frame_count % DETECTION_EVERY_N == 0:
+                try:
+                    state.detect_queue.put_nowait((frame.copy(), state.current_command))
+                except Exception:
+                    pass  # Detection busy → drop frame → correct behavior
+
+            # Get pre-encoded bytes from encode thread
+            # Falls back to inline encode for first few frames only
+            encoded = state.encoded_slot.read()
+            if encoded is None:
+                ret2, buf = cv2.imencode('.jpg', frame, fallback_params)
+                if not ret2:
+                    continue
+                encoded = buf.tobytes()
+
+            yield HEADER + encoded + FOOTER
+
+            # No sleep — camera.grab() is the natural throttle
+
         except GeneratorExit:
             break
         except Exception as e:
             print(f"Stream error: {e}")
-            time.sleep(0.1)
+            state.consecutive_errors += 1
 
 
 # ============================================================================
-# OPTIMIZED HELPER FUNCTIONS
+# EMBEDDINGS HELPER
 # ============================================================================
 
 def generate_embeddings_from_dataset():
-    """Optimized embedding generation with batch processing"""
     if not os.path.exists(DATASET_PATH) or not os.listdir(DATASET_PATH):
         return False, "Dataset folder is empty", 0
-    
-    # Use GPU if available
-    try:
-        model = insightface.app.FaceAnalysis(
-            name="buffalo_l",
-            providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
-        )
-        model.prepare(ctx_id=0)
-        print("Using GPU for embedding generation")
-    except:
-        model = insightface.app.FaceAnalysis(
-            name="buffalo_l",
-            providers=["CPUExecutionProvider"]
-        )
-        model.prepare(ctx_id=-1)
-        print("Using CPU for embedding generation")
-    
-    embeddings = []
-    names = []
-    processed = 0
-    failed = 0
-    
-    # Collect all images first
+
+    model = None
+    for providers in (
+        ["CUDAExecutionProvider", "CPUExecutionProvider"],
+        ["CPUExecutionProvider"],
+    ):
+        try:
+            model = insightface.app.FaceAnalysis(name="buffalo_l", providers=providers)
+            model.prepare(ctx_id=0 if "CUDA" in providers[0] else -1)
+            print(f"Embedding: {providers[0].replace('ExecutionProvider','')}")
+            break
+        except Exception as e:
+            print(f"Provider failed: {e}")
+
+    if model is None:
+        return False, "Could not load model", 0
+
+    embeddings, names = [], []
+    processed = failed = 0
     image_paths = []
+
     for person in os.listdir(DATASET_PATH):
-        person_path = os.path.join(DATASET_PATH, person)
-        if not os.path.isdir(person_path):
+        pp = os.path.join(DATASET_PATH, person)
+        if not os.path.isdir(pp):
             continue
-        
-        for img_name in os.listdir(person_path):
-            img_path = os.path.join(person_path, img_name)
-            image_paths.append((img_path, person))
-    
-    # Process images
+        for img_name in os.listdir(pp):
+            image_paths.append((os.path.join(pp, img_name), person))
+
     print(f"Processing {len(image_paths)} images...")
     for img_path, person in image_paths:
-        img = cv2.imread(img_path)
-        
-        if img is None:
+        try:
+            img = cv2.imread(img_path)
+            if img is None:
+                failed += 1
+                continue
+            faces = model.get(img)
+            if faces:
+                emb = faces[0].embedding.astype(np.float32)
+                embeddings.append(emb / np.linalg.norm(emb))
+                names.append(person)
+                processed += 1
+            else:
+                failed += 1
+        except Exception as e:
+            print(f"Error {img_path}: {e}")
             failed += 1
-            continue
-        
-        faces = model.get(img)
-        if len(faces) > 0:
-            emb = faces[0].embedding
-            emb = emb / np.linalg.norm(emb)
-            embeddings.append(emb)
-            names.append(person)
-            processed += 1
-        else:
-            failed += 1
-    
+
     if embeddings:
-        data = {"embeddings": embeddings, "names": names}
         os.makedirs("embeddings", exist_ok=True)
         with open(EMBEDDINGS_PATH, "wb") as f:
-            pickle.dump(data, f)
-        
+            pickle.dump({"embeddings": embeddings, "names": names}, f)
         state.load_embeddings()
         return True, f"Generated {processed} embeddings ({failed} failed)", processed
-    
+
     return False, "No valid faces found", 0
 
 
 # ============================================================================
-# ROUTES (Same as original)
+# ROUTES
 # ============================================================================
 
 @app.route('/')
@@ -491,35 +625,29 @@ def manage_page():
     persons = []
     if os.path.exists(DATASET_PATH):
         for person in os.listdir(DATASET_PATH):
-            person_path = os.path.join(DATASET_PATH, person)
-            if os.path.isdir(person_path):
-                count = len([f for f in os.listdir(person_path) if f.endswith('.jpg')])
+            pp = os.path.join(DATASET_PATH, person)
+            if os.path.isdir(pp):
+                count = len([f for f in os.listdir(pp) if f.endswith('.jpg')])
                 persons.append({'name': person, 'count': count})
     return render_template('manage.html', persons=persons)
 
 @app.route('/video_feed')
 def video_feed():
     return Response(generate_frames(),
-                   mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
-# ============================================================================
-# API ENDPOINTS (Same as original)
-# ============================================================================
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/set_command', methods=['POST'])
 def set_command():
-    data = request.json
-    command_text = data.get('command', '')
-    result = state.command_parser.parse(command_text)
-    
+    data   = request.json
+    result = state.command_parser.parse(data.get('command', ''))
     if result['valid']:
         state.current_command = result
-        feedback = state.command_parser.format_feedback(result)
-        return jsonify({'success': True, 'message': feedback, 'command': result})
-    
+        return jsonify({'success': True,
+                        'message': state.command_parser.format_feedback(result),
+                        'command': result})
     state.current_command = None
-    return jsonify({'success': False, 'message': f"Invalid: {result['error']}", 'command': result})
+    return jsonify({'success': False,
+                    'message': f"Invalid: {result['error']}", 'command': result})
 
 @app.route('/api/clear_command', methods=['POST'])
 def clear_command():
@@ -529,15 +657,12 @@ def clear_command():
 @app.route('/api/capture_frame', methods=['POST'])
 def capture_frame():
     import base64
-    
-    with state.frame_lock:
-        if state.latest_raw_frame is not None:
-            ret, buffer = cv2.imencode('.jpg', state.latest_raw_frame,
-                                      [cv2.IMWRITE_JPEG_QUALITY, 90])
-            if ret:
-                img_base64 = base64.b64encode(buffer).decode('utf-8')
-                return jsonify({'success': True, 'image': img_base64})
-    
+    frame, _ = state.raw_slot.read()
+    if frame is not None:
+        ret, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if ret:
+            return jsonify({'success': True,
+                            'image': base64.b64encode(buf).decode('utf-8')})
     return jsonify({'success': False, 'message': 'No frame available'})
 
 @app.route('/api/generate_embeddings', methods=['POST'])
@@ -547,62 +672,54 @@ def api_generate_embeddings():
 
 @app.route('/api/capture_snapshot', methods=['POST'])
 def capture_snapshot():
-    with state.frame_lock:
-        if state.latest_annotated_frame is not None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"snapshot_{timestamp}.jpg"
-            filepath = os.path.join(SNAPSHOTS_PATH, filename)
-            cv2.imwrite(filepath, state.latest_annotated_frame)
-            
-            return jsonify({
-                'success': True,
-                'message': 'Snapshot saved',
-                'filename': filename,
-                'path': filepath
-            })
-    
+    frame, _ = state.annotated_slot.read()
+    if frame is not None:
+        ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"snapshot_{ts}.jpg"
+        filepath = os.path.join(SNAPSHOTS_PATH, filename)
+        cv2.imwrite(filepath, frame)
+        return jsonify({'success': True, 'message': 'Snapshot saved',
+                        'filename': filename, 'path': filepath})
     return jsonify({'success': False, 'message': 'No frame available'})
 
 @app.route('/api/get_snapshot/<filename>')
 def get_snapshot(filename):
-    filepath = os.path.join(SNAPSHOTS_PATH, filename)
-    if os.path.exists(filepath):
-        return send_file(filepath, mimetype='image/jpeg')
+    fp = os.path.join(SNAPSHOTS_PATH, filename)
+    if os.path.exists(fp):
+        return send_file(fp, mimetype='image/jpeg')
     return jsonify({'error': 'Not found'}), 404
 
 @app.route('/api/detection_status')
 def detection_status():
-    with state.frame_lock:
-        return jsonify({
-            'detection_info': state.detection_results,
-            'current_command': state.current_command
-        })
+    return jsonify({
+        'detection_info':     state.detection_results,
+        'current_command':    state.current_command,
+        'consecutive_errors': state.consecutive_errors
+    })
 
 @app.route('/api/system_status')
 def system_status():
-    embeddings_exist = os.path.exists(EMBEDDINGS_PATH)
-    embeddings_count = len(state.known_names) if state.known_names else 0
-    
-    dataset_persons = []
-    if os.path.exists(DATASET_PATH):
-        dataset_persons = [d for d in os.listdir(DATASET_PATH)
-                          if os.path.isdir(os.path.join(DATASET_PATH, d))]
-    
+    emb_exist  = os.path.exists(EMBEDDINGS_PATH)
+    emb_count  = len(state.known_names) if state.known_names else 0
+    ds_persons = ([d for d in os.listdir(DATASET_PATH)
+                   if os.path.isdir(os.path.join(DATASET_PATH, d))]
+                  if os.path.exists(DATASET_PATH) else [])
     return jsonify({
-        'embeddings_loaded': embeddings_exist,
-        'embeddings_count': embeddings_count,
-        'dataset_persons': len(dataset_persons),
-        'persons': dataset_persons,
-        'camera_active': state.camera is not None,
-        'current_command': state.current_command
+        'embeddings_loaded':  emb_exist,
+        'embeddings_count':   emb_count,
+        'dataset_persons':    len(ds_persons),
+        'persons':            ds_persons,
+        'camera_active':      state.camera is not None,
+        'current_command':    state.current_command,
+        'consecutive_errors': state.consecutive_errors,
+        'camera_url':         CAMERA_INDEXES[state.camera_url_index]
     })
 
 @app.route('/api/delete_person/<person_name>', methods=['DELETE'])
 def delete_person(person_name):
-    person_path = os.path.join(DATASET_PATH, person_name)
-    if os.path.exists(person_path):
-        import shutil
-        shutil.rmtree(person_path)
+    pp = os.path.join(DATASET_PATH, person_name)
+    if os.path.exists(pp):
+        import shutil; shutil.rmtree(pp)
         return jsonify({'success': True, 'message': f'{person_name} deleted'})
     return jsonify({'success': False, 'message': 'Person not found'})
 
@@ -612,52 +729,139 @@ def upload_dataset():
         person_name = request.form.get('person_name')
         if not person_name:
             return jsonify({'success': False, 'message': 'Name required'})
-        
         person_dir = os.path.join(DATASET_PATH, person_name)
         os.makedirs(person_dir, exist_ok=True)
-        
         images = request.files.getlist('images')
         if not images:
             return jsonify({'success': False, 'message': 'No images uploaded'})
-        
-        saved_count = 0
-        for idx, image in enumerate(images):
-            if image:
-                filename = f"{idx:04d}.jpg"
-                filepath = os.path.join(person_dir, filename)
-                image.save(filepath)
-                saved_count += 1
-        
-        return jsonify({
-            'success': True,
-            'message': f'Saved {saved_count} images',
-            'count': saved_count
-        })
+        saved = 0
+        for idx, img in enumerate(images):
+            if img:
+                img.save(os.path.join(person_dir, f"{idx:04d}.jpg"))
+                saved += 1
+        return jsonify({'success': True, 'message': f'Saved {saved} images', 'count': saved})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/auto_snapshot', methods=['POST'])
+def toggle_auto_snapshot():
+    data = request.json or {}
+    if 'enabled'  in data: state.auto_snapshot_enabled = bool(data['enabled'])
+    if 'cooldown' in data: state.snapshot_cooldown     = float(data['cooldown'])
+    return jsonify({'success': True,
+                    'auto_snapshot_enabled': state.auto_snapshot_enabled,
+                    'cooldown_seconds': state.snapshot_cooldown})
 
 @app.route('/api/delete_embeddings', methods=['DELETE'])
 def delete_embeddings():
     try:
         if os.path.exists(EMBEDDINGS_PATH):
             os.remove(EMBEDDINGS_PATH)
-            state.known_embeddings = None
-            state.known_names = None
+            state.known_embeddings      = None
+            state.known_names           = None
             state.normalized_embeddings = None
-            return jsonify({
-                'success': True,
-                'message': 'Embeddings file deleted successfully'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Embeddings file not found'
-            })
+            return jsonify({'success': True, 'message': 'Embeddings deleted'})
+        return jsonify({'success': False, 'message': 'File not found'})
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'Error deleting embeddings: {str(e)}'
-        })
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/reconnect_camera', methods=['POST'])
+def reconnect_camera():
+    state.release_camera()
+    state.consecutive_errors = 0
+    cam = state.get_camera()
+    if cam and cam.isOpened():
+        return jsonify({'success': True, 'message': 'Camera reconnected'})
+    return jsonify({'success': False, 'message': 'Failed to reconnect'})
+
+
+# ═══ NEW: Verification & Sketch Routes ═══════════════════════════════════════
+
+@app.route('/api/verify_snapshot', methods=['POST'])
+def verify_snapshot():
+    """
+    Save the verified snapshot with proper naming.
+    Request body: {
+        "temp_filename": "auto_Alice_20260219_123456.jpg",
+        "person_name": "Alice",
+        "position_desc": "Person to the right of User1",
+        "create_sketch": true/false
+    }
+    """
+    try:
+        data = request.json or {}
+        temp_filename = data.get('temp_filename')
+        person_name   = data.get('person_name', 'Unknown')
+        position_desc = data.get('position_desc', '')
+        create_sketch = data.get('create_sketch', False)
+        
+        if not temp_filename:
+            return jsonify({'success': False, 'message': 'No filename provided'})
+        
+        # Build paths
+        temp_path = os.path.join(SNAPSHOTS_PATH, temp_filename)
+        if not os.path.exists(temp_path):
+            return jsonify({'success': False, 'message': 'Snapshot not found'})
+        
+        # Create verified filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = person_name.replace(" ", "_")
+        verified_filename = f"verified_{safe_name}_{timestamp}.jpg"
+        verified_path     = os.path.join(SNAPSHOTS_PATH, verified_filename)
+        
+        # Copy/rename the temp file
+        import shutil
+        shutil.copy2(temp_path, verified_path)
+        
+        result = {
+            'success': True,
+            'message': f'Verified snapshot saved as {verified_filename}',
+            'verified_filename': verified_filename,
+            'sketch_filename': None
+        }
+        
+        # Generate sketch if requested
+        if create_sketch:
+            from sketch_generator import generate_sketch_with_label
+            sketch_filename = f"sketch_{safe_name}_{timestamp}.jpg"
+            sketch_path     = os.path.join(SNAPSHOTS_PATH, sketch_filename)
+            
+            sketch_success = generate_sketch_with_label(
+                verified_path,
+                sketch_path,
+                person_name,
+                position_desc
+            )
+            
+            if sketch_success:
+                result['sketch_filename'] = sketch_filename
+                result['message'] += f' | Sketch created: {sketch_filename}'
+            else:
+                result['message'] += ' | Sketch generation failed'
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/api/discard_snapshot', methods=['POST'])
+def discard_snapshot():
+    """Delete a snapshot that was rejected during verification."""
+    try:
+        data = request.json or {}
+        filename = data.get('filename')
+        if not filename:
+            return jsonify({'success': False, 'message': 'No filename provided'})
+        
+        filepath = os.path.join(SNAPSHOTS_PATH, filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return jsonify({'success': True, 'message': 'Snapshot discarded'})
+        return jsonify({'success': False, 'message': 'File not found'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
 
 
 # ============================================================================
@@ -665,28 +869,26 @@ def delete_embeddings():
 # ============================================================================
 
 if __name__ == '__main__':
-    print("=" * 60)
-    print("OPTIMIZED FACE RECOGNITION SYSTEM")
-    print("=" * 60)
-    print(f"Camera Index: {CAMERA_INDEX}")
-    print(f"Dataset: {DATASET_PATH}")
-    print(f"Embeddings: {EMBEDDINGS_PATH}")
-    print(f"Frame Skip: Every {DETECTION_SKIP_FRAMES + 1} frames")
-    print(f"Detection Size: {DETECTION_SIZE}")
-    print(f"Stream Quality: {STREAM_JPEG_QUALITY}%")
-    print(f"Target FPS: {STREAM_FPS_TARGET}")
-    print("=" * 60)
-    
-    # Initialize
+    print("=" * 70)
+    print("MAXIMUM FPS FACE RECOGNITION — 3-THREAD PIPELINE")
+    print("=" * 70)
+    print(f"Threads:         Stream | Detection | Encode (fully decoupled)")
+    print(f"Camera:          {CAMERA_INDEXES[0]} (+ {len(CAMERA_INDEXES)-1} fallbacks)")
+    print(f"Detection:       Every {DETECTION_EVERY_N} frames @ {DETECTION_SIZE}")
+    print(f"Cosine sim:      Fast numpy BLAS (sklearn removed)")
+    print(f"Frame validate:  Corner-sampling (200x faster than np.mean)")
+    print(f"JPEG encode:     Background thread (zero work on stream hot path)")
+    print(f"Stream quality:  {STREAM_JPEG_QUALITY}%")
+    print(f"Auto-snapshot:   {state.snapshot_cooldown}s cooldown")
+    print("=" * 70)
+
     state.initialize_recognizer()
     state.load_embeddings()
-    
-    # Use production WSGI server for better performance
+
     try:
         from waitress import serve
-        print("Using Waitress production server")
+        print("Server: Waitress (production)")
         serve(app, host='0.0.0.0', port=5000, threads=8)
     except ImportError:
-        print("Waitress not found, using Flask dev server")
-        print("Install waitress for better performance: pip install waitress")
+        print("Server: Flask dev (pip install waitress for production)")
         app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)

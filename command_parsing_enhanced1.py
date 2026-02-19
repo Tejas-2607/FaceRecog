@@ -89,27 +89,18 @@ class CommandParser:
                 dir_index = i
                 break
 
-        # ── Single-person detection mode (no direction) ──────────────────────
-        # If no direction keyword found, treat as single-person detection:
-        # "detect User1" or "identify Alice" or "scan Bob"
         if direction is None:
-            # Extract name from entire command (no direction to work around)
-            name = self._extract_name(raw.split(), 0, len(words))
-            if not name:
-                return self._error(
-                    "Could not identify a person name. "
-                    "Examples: 'detect Alice' or 'find person right to Bob'"
-                )
-            return {
-                "valid": True,
-                "reference_person": name,
-                "direction": None,  # None = single-person mode
-                "raw_command": raw,
-                "mode": "single"
-            }
+            return self._error(
+                "No direction found. Use 'left' or 'right' in your command. "
+                "Example: 'detect person right to Alice'"
+            )
 
         # ── 2. Extract reference person name ────────────────────────────────
-        # Direction WAS found — extract name around it
+        # Strategy: take the original-case tokens, remove all noise words,
+        # and what remains (with length > 1 char) is the name candidate.
+        # We prefer tokens AFTER the direction word (common pattern: "right of Alice")
+        # but also look before it ("Alice on the right").
+
         orig_words = raw.split()  # preserve original casing
 
         # Try tokens after direction index first (most common pattern)
@@ -130,7 +121,6 @@ class CommandParser:
             "reference_person": name,
             "direction": direction,
             "raw_command": raw,
-            "mode": "directional"
         }
 
     def _extract_name(self, words: list, start: int, end: int) -> str:
@@ -153,14 +143,8 @@ class CommandParser:
             return f"Invalid: {result.get('error', 'Unknown error')}"
 
         name      = result["reference_person"]
-        direction = result.get("direction")
-        
-        if direction is None:
-            # Single-person detection mode
-            return f"Detecting only '{name}' 🎯"
-        
-        # Directional mode
-        arrow = "→" if direction == "right" else "←"
+        direction = result["direction"]
+        arrow     = "→" if direction == "right" else "←"
         return (
             f"Looking for person to the {direction.upper()} of "
             f"'{name}' {arrow}"

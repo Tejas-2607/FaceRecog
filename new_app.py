@@ -3,7 +3,7 @@ import cv2
 import insightface
 import pickle
 import numpy as np
-from command_parsing_enhanced import CommandParser
+from command_parsing_enhanced1 import CommandParser
 import os
 from datetime import datetime
 import threading
