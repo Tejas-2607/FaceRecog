@@ -1,35 +1,271 @@
-{% extends "base.html" %} {% block title %}Live Recognition - Face Recognition
-System{% endblock %} {% block content %}
+{% extends "base.html" %} {% block title %}Live Recognition - Face Recognition System{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ── Voice & Command UI ───────────────────────────────────────────── */
+  .command-input-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+    margin-bottom: 0.75rem;
+  }
+
+  .input-command {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1.5px solid #334155;
+    border-radius: 0.6rem;
+    color: var(--white);
+    font-size: 0.95rem;
+    transition: border-color 0.25s, box-shadow 0.25s;
+  }
+
+  .input-command:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18);
+  }
+
+  .input-command.voice-active {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);
+    animation: borderPulse 1s infinite;
+  }
+
+  @keyframes borderPulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22); }
+    50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.10); }
+  }
+
+  /* Mic button */
+  .btn-mic {
+    width: 42px;
+    height: 42px;
+    flex-shrink: 0;
+    border-radius: 0.6rem;
+    border: 1.5px solid rgba(16, 185, 129, 0.45);
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    font-size: 1.15rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.22s;
+    position: relative;
+  }
+
+  .btn-mic:hover {
+    background: rgba(16, 185, 129, 0.25);
+    transform: scale(1.07);
+  }
+
+  .btn-mic.recording {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #ef4444;
+    animation: micPulse 1s infinite;
+  }
+
+  @keyframes micPulse {
+    0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+    50%       { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+  }
+
+  /* Voice status bar */
+  .voice-status-bar {
+    display: none;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.9rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+    color: #f87171;
+  }
+
+  .voice-status-bar.visible { display: flex; }
+
+  .voice-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    animation: blink 1s infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .voice-status-text { flex: 1; }
+
+  .btn-cancel-voice {
+    padding: 0.25rem 0.65rem;
+    border-radius: 0.375rem;
+    border: 1px solid rgba(239,68,68,0.4);
+    background: rgba(239,68,68,0.15);
+    color: #f87171;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn-cancel-voice:hover {
+    background: rgba(239,68,68,0.35);
+    color: #fff;
+  }
+
+  /* Command buttons row */
+  .command-buttons {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .btn-primary-full, .btn-secondary-full {
+    flex: 1;
+    padding: 0.7rem;
+    border: none;
+    border-radius: 0.55rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.22s;
+    font-size: 0.9rem;
+    letter-spacing: 0.01em;
+  }
+
+  .btn-primary-full {
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    color: #fff;
+  }
+
+  .btn-primary-full:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(79,70,229,0.45);
+  }
+
+  .btn-secondary-full {
+    background: rgba(100,116,139,0.22);
+    color: #cbd5e1;
+    border: 1px solid rgba(100,116,139,0.4);
+  }
+
+  .btn-secondary-full:hover {
+    background: rgba(100,116,139,0.4);
+    color: #fff;
+  }
+
+  /* No speech support warning */
+  .no-speech-note {
+    font-size: 0.78rem;
+    color: #64748b;
+    text-align: center;
+    margin-top: 0.4rem;
+    display: none;
+  }
+
+  /* Example chips */
+  .command-examples-mini {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid rgba(51,65,85,0.5);
+  }
+
+  .example-label {
+    font-size: 0.8rem;
+    color: #64748b;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .examples-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .example-cmd {
+    display: block;
+    padding: 0.45rem 0.7rem;
+    background: rgba(15,23,42,0.55);
+    border: 1px solid #334155;
+    border-radius: 0.4rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.22s;
+    color: #818cf8;
+    font-family: 'Courier New', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .example-cmd:hover {
+    background: rgba(79,70,229,0.18);
+    border-color: #6366f1;
+    transform: translateX(4px);
+    color: #a5b4fc;
+  }
+
+  /* Feedback box */
+  .feedback-box {
+    padding: 0.65rem 0.9rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+    min-height: 2.2rem;
+  }
+
+  .feedback-success {
+    background: rgba(16,185,129,0.15);
+    color: #34d399;
+    border: 1px solid rgba(16,185,129,0.3);
+  }
+
+  .feedback-error {
+    background: rgba(239,68,68,0.15);
+    color: #f87171;
+    border: 1px solid rgba(239,68,68,0.3);
+  }
+
+  /* Live transcript overlay on input */
+  .transcript-interim {
+    color: #64748b;
+    font-style: italic;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
 <div class="main-layout">
-  <!-- Left Side: Live Video (75%) -->
+
+  <!-- ── Left: Video ──────────────────────────────────────────────── -->
   <div class="video-section-main">
     <div class="video-header">
-      <h2>📹 Live Recognition</h2>
+      <h2>🎥 Live Recognition</h2>
       <div class="status-indicator">
-        <span id="datasetStatus" class="status-badge">Loading...</span>
-        <span id="commandStatus" class="status-badge">No command</span>
+        <span id="datasetStatus"  class="status-badge">Loading...</span>
+        <span id="commandStatus"  class="status-badge">No command</span>
       </div>
     </div>
 
     <div class="video-container-large">
-      <img
-        id="videoFeed"
-        src="{{ url_for('video_feed') }}"
-        alt="Live Video Feed"
-      />
+      <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Live Video Feed" />
     </div>
 
-    <!-- Warning message below video -->
-    <div id="noDatasetWarning" class="warning-message" style="display: none">
+    <div id="noDatasetWarning" class="warning-message" style="display:none">
       <span class="warning-icon">⚠️</span>
-      <span class="warning-text"
-        >No persons in dataset. Please add users first.</span
-      >
+      <span class="warning-text">No persons in dataset. Please add users first.</span>
       <a href="/capture" class="btn-warning-link">Add User</a>
     </div>
 
-    <!-- Snapshot Display Area -->
-    <div id="snapshotArea" class="snapshot-display" style="display: none">
+    <div id="snapshotArea" class="snapshot-display" style="display:none">
       <div class="snapshot-header">
         <h3>📸 Latest Snapshot</h3>
         <button id="closeSnapshot" class="btn-close-snap">✕</button>
@@ -42,34 +278,63 @@ System{% endblock %} {% block content %}
     </div>
   </div>
 
-  <!-- Right Side: Controls (25%) -->
+  <!-- ── Right: Controls ─────────────────────────────────────────── -->
   <div class="controls-section">
-    <!-- Command Input -->
+
+    <!-- Command Input Card -->
     <div class="control-card">
       <h3>🎯 Command Control</h3>
+
       <div class="command-input-wrapper">
-        <label>Enter Command:</label>
-        <input
-          type="text"
-          id="commandInput"
-          placeholder="detect person right to User1"
-          class="input-command"
-        />
+        <label>Enter or speak a command:</label>
+
+        <!-- Input + Mic button on same row -->
+        <div class="command-input-row">
+          <input
+            type="text"
+            id="commandInput"
+            placeholder="detect person right to User1"
+            class="input-command"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="micBtn" class="btn-mic" title="Start voice input (click again or Cancel to stop)">
+            🎤
+          </button>
+        </div>
+
+        <!-- Voice status bar (hidden until mic active) -->
+        <div id="voiceStatusBar" class="voice-status-bar">
+          <div class="voice-dot"></div>
+          <span class="voice-status-text" id="voiceStatusText">Listening…</span>
+          <button id="cancelVoiceBtn" class="btn-cancel-voice">✕ Cancel</button>
+        </div>
+
+        <!-- Execute / Clear -->
         <div class="command-buttons">
           <button id="executeBtn" class="btn-primary-full">▶ Execute</button>
-          <button id="clearBtn" class="btn-secondary-full">✕ Clear</button>
+          <button id="clearBtn"   class="btn-secondary-full">✕ Clear</button>
         </div>
+
         <div id="commandFeedback" class="feedback-box"></div>
+
+        <!-- No speech API note -->
+        <p id="noSpeechNote" class="no-speech-note">
+          ⚠ Voice input not supported in this browser. Use text instead.
+        </p>
       </div>
 
+      <!-- Example commands -->
       <div class="command-examples-mini">
-        <p class="example-label">Examples:</p>
-        <code class="example-cmd" data-cmd="detect person right to User1"
-          >detect person right to User1</code
-        >
-        <code class="example-cmd" data-cmd="find second person left of User1"
-          >find second person left of User1</code
-        >
+        <p class="example-label">Examples (click to use)</p>
+        <div class="examples-grid">
+          <code class="example-cmd" data-cmd="detect person right to User1">detect person right to User1</code>
+          <code class="example-cmd" data-cmd="find person left of Alice">find person left of Alice</code>
+          <code class="example-cmd" data-cmd="identify who is right of Bob">identify who is right of Bob</code>
+          <code class="example-cmd" data-cmd="scan left side of John">scan left side of John</code>
+          <code class="example-cmd" data-cmd="who is standing right of Sarah">who is standing right of Sarah</code>
+          <code class="example-cmd" data-cmd="show me someone to the left of Mike">show me someone to the left of Mike</code>
+        </div>
       </div>
     </div>
 
@@ -83,7 +348,7 @@ System{% endblock %} {% block content %}
         </button>
         <div class="snapshot-mode">
           <label class="checkbox-label">
-            <input type="checkbox" id="autoSnapshotMode" />
+            <input type="checkbox" id="autoSnapshotMode" checked />
             <span>Auto-capture on detection</span>
           </label>
         </div>
@@ -97,7 +362,7 @@ System{% endblock %} {% block content %}
       <div class="info-stats">
         <div class="stat-row">
           <span class="stat-label">Faces Detected:</span>
-          <span id="faceCount" class="stat-value">0</span>
+          <span id="faceCount"    class="stat-value">0</span>
         </div>
         <div class="stat-row">
           <span class="stat-label">Anchor Person:</span>
@@ -105,7 +370,7 @@ System{% endblock %} {% block content %}
         </div>
         <div class="stat-row">
           <span class="stat-label">Target Found:</span>
-          <span id="targetFound" class="stat-value">-</span>
+          <span id="targetFound"  class="stat-value">-</span>
         </div>
       </div>
       <div id="detectedFaces" class="detected-faces-list"></div>
@@ -125,238 +390,328 @@ System{% endblock %} {% block content %}
         </div>
       </div>
     </div>
-  </div>
-</div>
-{% endblock %} {% block extra_js %}
+
+  </div><!-- .controls-section -->
+</div><!-- .main-layout -->
+{% endblock %}
+
+{% block extra_js %}
 <script>
-  let autoSnapshotEnabled = false;
-  let lastSnapshotTime = 0;
-  let currentCommand = null;
-  let lastDetection = null;
+/* =====================================================================
+   STATE
+   ===================================================================== */
+let autoSnapshotEnabled  = true;
+let lastSnapshotTime     = 0;
+let currentCommand       = null;
 
-  // Check dataset status on load
-  function checkDatasetStatus() {
-    fetch("/api/system_status")
-      .then((res) => res.json())
-      .then((data) => {
-        const hasDataset = data.dataset_persons > 0;
-        const hasEmbeddings = data.embeddings_loaded;
+/* =====================================================================
+   VOICE INPUT
+   ===================================================================== */
+const SpeechRecognition =
+  window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
-        document.getElementById("totalPersons").textContent =
-          data.dataset_persons;
-        document.getElementById("totalEmbeddings").textContent =
-          data.embeddings_count;
+let recognition   = null;
+let isRecording   = false;
+let voiceAborted  = false;   // true when user clicked Cancel
 
-        if (!hasDataset) {
-          document.getElementById("noDatasetWarning").style.display = "flex";
-          document.getElementById("datasetStatus").textContent =
-            "⚠️ No dataset";
-          document.getElementById("datasetStatus").className =
-            "status-badge status-warning";
-        } else if (!hasEmbeddings) {
-          document.getElementById("noDatasetWarning").style.display = "flex";
-          document.getElementById("datasetStatus").textContent =
-            "⚠️ No embeddings";
-          document.getElementById("datasetStatus").className =
-            "status-badge status-warning";
-        } else {
-          document.getElementById("noDatasetWarning").style.display = "none";
-          document.getElementById("datasetStatus").textContent =
-            `✓ ${data.dataset_persons} persons`;
-          document.getElementById("datasetStatus").className =
-            "status-badge status-success";
-        }
-      })
-      .catch((err) => console.error("Status check failed:", err));
-  }
+const micBtn          = document.getElementById('micBtn');
+const cancelVoiceBtn  = document.getElementById('cancelVoiceBtn');
+const voiceStatusBar  = document.getElementById('voiceStatusBar');
+const voiceStatusText = document.getElementById('voiceStatusText');
+const commandInput    = document.getElementById('commandInput');
+const noSpeechNote    = document.getElementById('noSpeechNote');
 
-  // Execute command
-  document.getElementById("executeBtn").addEventListener("click", function () {
-    const command = document.getElementById("commandInput").value.trim();
-    const feedbackDiv = document.getElementById("commandFeedback");
+if (!SpeechRecognition) {
+  // Browser doesn't support speech — hide mic, show note
+  micBtn.style.display = 'none';
+  noSpeechNote.style.display = 'block';
+} else {
+  setupSpeechRecognition();
+}
 
-    if (!command) {
-      feedbackDiv.textContent = "⚠️ Please enter a command";
-      feedbackDiv.className = "feedback-box feedback-error";
-      return;
-    }
+function setupSpeechRecognition() {
+  recognition = new SpeechRecognition();
+  recognition.lang            = 'en-US';
+  recognition.interimResults  = true;   // show live transcript
+  recognition.maxAlternatives = 1;
+  recognition.continuous      = false;  // single utterance per press
 
-    fetch("/api/set_command", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: command }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          feedbackDiv.textContent = "✓ " + data.message;
-          feedbackDiv.className = "feedback-box feedback-success";
-          currentCommand = data.command;
-          document.getElementById("commandStatus").textContent = "▶ Active";
-          document.getElementById("commandStatus").className =
-            "status-badge status-active";
-        } else {
-          feedbackDiv.textContent = "✗ " + data.message;
-          feedbackDiv.className = "feedback-box feedback-error";
-        }
-      })
-      .catch((err) => {
-        feedbackDiv.textContent = "✗ Error executing command";
-        feedbackDiv.className = "feedback-box feedback-error";
-      });
-  });
+  /* Live interim transcript → show in input as placeholder-style */
+  recognition.onresult = (event) => {
+    let interim   = '';
+    let finalText = '';
 
-  // Clear command
-  document.getElementById("clearBtn").addEventListener("click", function () {
-    document.getElementById("commandInput").value = "";
-    document.getElementById("commandFeedback").textContent = "";
-    currentCommand = null;
-    document.getElementById("commandStatus").textContent = "No command";
-    document.getElementById("commandStatus").className = "status-badge";
-
-    fetch("/api/clear_command", { method: "POST" });
-  });
-
-  // Example commands
-  document.querySelectorAll(".example-cmd").forEach((cmd) => {
-    cmd.addEventListener("click", function () {
-      document.getElementById("commandInput").value = this.dataset.cmd;
-    });
-  });
-
-  // Manual snapshot
-  document
-    .getElementById("manualSnapshotBtn")
-    .addEventListener("click", function () {
-      captureSnapshot("manual");
-    });
-
-  // Auto-snapshot toggle
-  document
-    .getElementById("autoSnapshotMode")
-    .addEventListener("change", function () {
-      autoSnapshotEnabled = this.checked;
-      document.getElementById("snapshotStatus").textContent =
-        autoSnapshotEnabled ? "✓ Auto-capture enabled" : "";
-    });
-
-  // Capture snapshot function
-  function captureSnapshot(mode) {
-    const now = Date.now();
-    if (now - lastSnapshotTime < 2000) return; // Prevent spam
-    lastSnapshotTime = now;
-
-    fetch("/api/capture_snapshot", { method: "POST" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          showSnapshot(data.filename, data.person_name || "Unknown");
-          document.getElementById("snapshotStatus").textContent =
-            `✓ Snapshot saved: ${data.filename}`;
-          document.getElementById("snapshotStatus").className =
-            "status-text status-success";
-          setTimeout(() => {
-            document.getElementById("snapshotStatus").textContent = "";
-          }, 3000);
-        }
-      })
-      .catch((err) => console.error("Snapshot failed:", err));
-  }
-
-  // Show snapshot in UI
-  function showSnapshot(filename, personName) {
-    const snapshotArea = document.getElementById("snapshotArea");
-    const snapshotImage = document.getElementById("snapshotImage");
-    const snapshotTime = document.getElementById("snapshotTime");
-    const snapshotPerson = document.getElementById("snapshotPerson");
-
-    snapshotImage.src = `/api/get_snapshot/${filename}`;
-    snapshotTime.textContent = new Date().toLocaleTimeString();
-    snapshotPerson.textContent = personName;
-    snapshotArea.style.display = "block";
-  }
-
-  // Close snapshot
-  document
-    .getElementById("closeSnapshot")
-    .addEventListener("click", function () {
-      document.getElementById("snapshotArea").style.display = "none";
-    });
-
-  // Poll for detection updates
-  setInterval(() => {
-    fetch("/api/detection_status")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.detection_info) {
-          const info = data.detection_info;
-          document.getElementById("faceCount").textContent =
-            info.total_faces || 0;
-          document.getElementById("anchorPerson").textContent =
-            info.anchor_detected ? currentCommand?.reference_person : "-";
-          document.getElementById("targetFound").textContent =
-            info.target_detected ? "✓ Yes" : "✗ No";
-
-          // Auto-snapshot logic
-          if (
-            autoSnapshotEnabled &&
-            currentCommand &&
-            info.target_detected &&
-            Date.now() - lastSnapshotTime > 5000
-          ) {
-            captureSnapshot("auto");
-          }
-
-          // Update detected faces list
-          updateDetectedFacesList(info.faces);
-          lastDetection = info;
-        }
-      })
-      .catch((err) => console.error("Detection poll failed:", err));
-  }, 1000); // Poll every second
-
-  // Update detected faces list
-  function updateDetectedFacesList(faces) {
-    const listDiv = document.getElementById("detectedFaces");
-    if (!faces || faces.length === 0) {
-      listDiv.innerHTML = '<p class="no-faces">No faces detected</p>';
-      return;
-    }
-
-    listDiv.innerHTML = faces
-      .map(
-        (face) =>
-          `<div class="face-item">
-            <span class="face-name">${face.name}</span>
-            <span class="face-score">${(face.score * 100).toFixed(1)}%</span>
-        </div>`,
-      )
-      .join("");
-  }
-
-  // Initialize
-  async function initializePage() {
-    // Ensure server has camera access
-    try {
-      await fetch("/api/acquire_camera", { method: "POST" });
-      console.log("Server camera acquired");
-    } catch (err) {
-      console.error("Failed to acquire server camera:", err);
-    }
-
-    checkDatasetStatus();
-  }
-
-  initializePage();
-  setInterval(checkDatasetStatus, 10000); // Check every 10 seconds
-
-  // Allow Enter key for command
-  document
-    .getElementById("commandInput")
-    .addEventListener("keypress", function (e) {
-      if (e.key === "Enter") {
-        document.getElementById("executeBtn").click();
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalText += transcript;
+      } else {
+        interim += transcript;
       }
+    }
+
+    if (finalText) {
+      commandInput.value = finalText.trim();
+      voiceStatusText.textContent = `✓ Got: "${finalText.trim()}"`;
+      stopRecording(false);   // stop cleanly, keep text
+    } else if (interim) {
+      commandInput.value = interim;   // live preview
+      voiceStatusText.textContent = `Listening… "${interim}"`;
+    }
+  };
+
+  recognition.onerror = (event) => {
+    if (voiceAborted) return;  // user cancelled — ignore error
+    const msgs = {
+      'no-speech':        'No speech detected. Try again.',
+      'audio-capture':    'Microphone not found or blocked.',
+      'not-allowed':      'Microphone permission denied.',
+      'network':          'Network error during speech recognition.',
+    };
+    voiceStatusText.textContent = msgs[event.error] || `Error: ${event.error}`;
+    stopRecording(false);
+  };
+
+  recognition.onend = () => {
+    // onend fires even on abort — only clear input if user cancelled
+    if (voiceAborted) {
+      commandInput.value = '';
+    }
+    stopRecording(false);
+  };
+}
+
+micBtn.addEventListener('click', () => {
+  if (isRecording) {
+    stopRecording(true);   // stop = user clicked mic again to stop
+  } else {
+    startRecording();
+  }
+});
+
+cancelVoiceBtn.addEventListener('click', () => {
+  stopRecording(true, true);  // cancel = discard text
+});
+
+function startRecording() {
+  if (!recognition) return;
+  voiceAborted          = false;
+  isRecording           = true;
+  commandInput.value    = '';
+  commandInput.classList.add('voice-active');
+  micBtn.classList.add('recording');
+  micBtn.title          = 'Recording… click to stop';
+  micBtn.textContent    = '⏹';
+  voiceStatusBar.classList.add('visible');
+  voiceStatusText.textContent = 'Listening…';
+
+  try {
+    recognition.start();
+  } catch(e) {
+    // recognition already started — ignore
+  }
+}
+
+function stopRecording(userStopped = false, cancel = false) {
+  if (!isRecording && !cancel) return;
+
+  if (cancel) voiceAborted = true;
+
+  isRecording = false;
+  commandInput.classList.remove('voice-active');
+  micBtn.classList.remove('recording');
+  micBtn.title     = 'Start voice input';
+  micBtn.textContent = '🎤';
+
+  try { recognition.abort(); } catch(e) {}
+
+  // Hide status bar after brief delay so user reads the result
+  setTimeout(() => {
+    voiceStatusBar.classList.remove('visible');
+    voiceStatusText.textContent = 'Listening…';
+    if (cancel) commandInput.value = '';
+  }, cancel ? 0 : 1200);
+}
+
+
+/* =====================================================================
+   COMMAND EXECUTION
+   ===================================================================== */
+function executeCommand() {
+  const cmd         = commandInput.value.trim();
+  const feedbackDiv = document.getElementById('commandFeedback');
+
+  if (!cmd) {
+    feedbackDiv.textContent  = '⚠ Please enter or speak a command';
+    feedbackDiv.className    = 'feedback-box feedback-error';
+    return;
+  }
+
+  fetch('/api/set_command', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ command: cmd }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        feedbackDiv.textContent = '✓ ' + data.message;
+        feedbackDiv.className   = 'feedback-box feedback-success';
+        currentCommand          = data.command;
+        const cs = document.getElementById('commandStatus');
+        cs.textContent = '▶ Active';
+        cs.className   = 'status-badge status-active';
+      } else {
+        feedbackDiv.textContent = '✗ ' + data.message;
+        feedbackDiv.className   = 'feedback-box feedback-error';
+      }
+    })
+    .catch(() => {
+      feedbackDiv.textContent = '✗ Network error';
+      feedbackDiv.className   = 'feedback-box feedback-error';
     });
+}
+
+document.getElementById('executeBtn').addEventListener('click', executeCommand);
+
+document.getElementById('commandInput').addEventListener('keypress', e => {
+  if (e.key === 'Enter') executeCommand();
+});
+
+/* Clear command */
+document.getElementById('clearBtn').addEventListener('click', () => {
+  commandInput.value = '';
+  document.getElementById('commandFeedback').textContent = '';
+  currentCommand = null;
+  const cs = document.getElementById('commandStatus');
+  cs.textContent = 'No command';
+  cs.className   = 'status-badge';
+  fetch('/api/clear_command', { method: 'POST' });
+});
+
+/* Click example → fill input */
+document.querySelectorAll('.example-cmd').forEach(el => {
+  el.addEventListener('click', function() {
+    commandInput.value = this.dataset.cmd;
+    commandInput.focus();
+  });
+});
+
+
+/* =====================================================================
+   SNAPSHOT
+   ===================================================================== */
+document.getElementById('autoSnapshotMode').checked = autoSnapshotEnabled;
+document.getElementById('autoSnapshotMode').addEventListener('change', function() {
+  autoSnapshotEnabled = this.checked;
+  document.getElementById('snapshotStatus').textContent =
+    autoSnapshotEnabled ? '✓ Auto-capture enabled' : '';
+});
+
+document.getElementById('manualSnapshotBtn').addEventListener('click', () => captureSnapshot());
+
+document.getElementById('closeSnapshot').addEventListener('click', () => {
+  document.getElementById('snapshotArea').style.display = 'none';
+});
+
+function captureSnapshot() {
+  const now = Date.now();
+  if (now - lastSnapshotTime < 2000) return;
+  lastSnapshotTime = now;
+
+  fetch('/api/capture_snapshot', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showSnapshot(data.filename);
+        const ss = document.getElementById('snapshotStatus');
+        ss.textContent = `✓ Saved: ${data.filename}`;
+        ss.className   = 'status-text status-success';
+        setTimeout(() => { ss.textContent = ''; }, 3000);
+      }
+    })
+    .catch(console.error);
+}
+
+function showSnapshot(filename) {
+  document.getElementById('snapshotImage').src = `/api/get_snapshot/${filename}`;
+  document.getElementById('snapshotTime').textContent = new Date().toLocaleTimeString();
+  document.getElementById('snapshotArea').style.display = 'block';
+}
+
+
+/* =====================================================================
+   SYSTEM STATUS
+   ===================================================================== */
+function checkDatasetStatus() {
+  fetch('/api/system_status')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('totalPersons').textContent    = data.dataset_persons;
+      document.getElementById('totalEmbeddings').textContent = data.embeddings_count;
+
+      const warn = document.getElementById('noDatasetWarning');
+      const ds   = document.getElementById('datasetStatus');
+
+      if (!data.dataset_persons) {
+        warn.style.display = 'flex';
+        ds.textContent = '⚠ No dataset';
+        ds.className   = 'status-badge status-warning';
+      } else if (!data.embeddings_loaded) {
+        warn.style.display = 'flex';
+        ds.textContent = '⚠ No embeddings';
+        ds.className   = 'status-badge status-warning';
+      } else {
+        warn.style.display = 'none';
+        ds.textContent = `✓ ${data.dataset_persons} persons`;
+        ds.className   = 'status-badge status-success';
+      }
+    })
+    .catch(console.error);
+}
+
+checkDatasetStatus();
+setInterval(checkDatasetStatus, 10000);
+
+
+/* =====================================================================
+   DETECTION STATUS POLL
+   ===================================================================== */
+setInterval(() => {
+  fetch('/api/detection_status')
+    .then(r => r.json())
+    .then(data => {
+      const info = data.detection_info || {};
+      document.getElementById('faceCount').textContent =
+        info.total_faces ?? 0;
+      document.getElementById('anchorPerson').textContent =
+        info.anchor_detected ? (currentCommand?.reference_person ?? '-') : '-';
+      document.getElementById('targetFound').textContent =
+        info.target_detected ? '✓ Yes' : '✗ No';
+
+      updateDetectedFacesList(info.faces);
+
+      // Auto-snapshot when target is detected
+      if (autoSnapshotEnabled && currentCommand &&
+          info.target_detected && Date.now() - lastSnapshotTime > 5000) {
+        captureSnapshot();
+      }
+    })
+    .catch(console.error);
+}, 1000);
+
+function updateDetectedFacesList(faces) {
+  const el = document.getElementById('detectedFaces');
+  if (!faces || !faces.length) {
+    el.innerHTML = '<p class="no-faces">No faces detected</p>';
+    return;
+  }
+  el.innerHTML = faces.map(f =>
+    `<div class="face-item">
+       <span class="face-name">${f.name}</span>
+       <span class="face-score">${(f.score * 100).toFixed(1)}%</span>
+     </div>`
+  ).join('');
+}
 </script>
 {% endblock %}

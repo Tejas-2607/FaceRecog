@@ -1,155 +1,362 @@
-{% extends "base.html" %}
+{% extends "base.html" %} {% block title %}Live Recognition - Face Recognition
+System{% endblock %} {% block content %}
+<div class="main-layout">
+  <!-- Left Side: Live Video (75%) -->
+  <div class="video-section-main">
+    <div class="video-header">
+      <h2>📹 Live Recognition</h2>
+      <div class="status-indicator">
+        <span id="datasetStatus" class="status-badge">Loading...</span>
+        <span id="commandStatus" class="status-badge">No command</span>
+      </div>
+    </div>
 
-{% block title %}Home - Face Recognition System{% endblock %}
+    <div class="video-container-large">
+      <img
+        id="videoFeed"
+        src="{{ url_for('video_feed') }}"
+        alt="Live Video Feed"
+      />
+    </div>
 
-{% block content %}
-<div class="hero">
-    <h1>Welcome to Face Recognition System</h1>
-    <p class="subtitle">Intelligent Vision-Based Surveillance & Interaction Platform</p>
+    <!-- Warning message below video -->
+    <div id="noDatasetWarning" class="warning-message" style="display: none">
+      <span class="warning-icon">⚠️</span>
+      <span class="warning-text"
+        >No persons in dataset. Please add users first.</span
+      >
+      <a href="/capture" class="btn-warning-link">Add User</a>
+    </div>
+
+    <!-- Snapshot Display Area -->
+    <div id="snapshotArea" class="snapshot-display" style="display: none">
+      <div class="snapshot-header">
+        <h3>📸 Latest Snapshot</h3>
+        <button id="closeSnapshot" class="btn-close-snap">✕</button>
+      </div>
+      <img id="snapshotImage" src="" alt="Snapshot" />
+      <div class="snapshot-info">
+        <span id="snapshotTime"></span>
+        <span id="snapshotPerson"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Side: Controls (25%) -->
+  <div class="controls-section">
+    <!-- Command Input -->
+    <div class="control-card">
+      <h3>🎯 Command Control</h3>
+      <div class="command-input-wrapper">
+        <label>Enter Command:</label>
+        <input
+          type="text"
+          id="commandInput"
+          placeholder="detect person right to User1"
+          class="input-command"
+        />
+        <div class="command-buttons">
+          <button id="executeBtn" class="btn-primary-full">▶ Execute</button>
+          <button id="clearBtn" class="btn-secondary-full">✕ Clear</button>
+        </div>
+        <div id="commandFeedback" class="feedback-box"></div>
+      </div>
+
+      <div class="command-examples-mini">
+        <p class="example-label">Examples:</p>
+        <code class="example-cmd" data-cmd="detect person right to User1"
+          >detect person right to User1</code
+        >
+        <code class="example-cmd" data-cmd="find second person left of User1"
+          >find second person left of User1</code
+        >
+      </div>
+    </div>
+
+    <!-- Snapshot Control -->
+    <div class="control-card">
+      <h3>📷 Snapshot Control</h3>
+      <div class="snapshot-controls">
+        <button id="manualSnapshotBtn" class="btn-snapshot">
+          <span class="btn-icon">📸</span>
+          Manual Snapshot
+        </button>
+        <div class="snapshot-mode">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoSnapshotMode" />
+            <span>Auto-capture on detection</span>
+          </label>
+        </div>
+        <div id="snapshotStatus" class="status-text"></div>
+      </div>
+    </div>
+
+    <!-- Detection Info -->
+    <div class="control-card">
+      <h3>ℹ️ Detection Info</h3>
+      <div class="info-stats">
+        <div class="stat-row">
+          <span class="stat-label">Faces Detected:</span>
+          <span id="faceCount" class="stat-value">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Anchor Person:</span>
+          <span id="anchorPerson" class="stat-value">-</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Target Found:</span>
+          <span id="targetFound" class="stat-value">-</span>
+        </div>
+      </div>
+      <div id="detectedFaces" class="detected-faces-list"></div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="control-card control-card-compact">
+      <h3>📊 System Status</h3>
+      <div class="quick-stats">
+        <div class="quick-stat">
+          <div class="quick-stat-value" id="totalPersons">0</div>
+          <div class="quick-stat-label">Persons</div>
+        </div>
+        <div class="quick-stat">
+          <div class="quick-stat-value" id="totalEmbeddings">0</div>
+          <div class="quick-stat-label">Embeddings</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
-
-<div class="cards-grid">
-    <div class="card">
-        <div class="card-icon">📸</div>
-        <h3>1. Capture Dataset</h3>
-        <p>Capture face images for each person you want the system to recognize. Recommended: 50 images per person.</p>
-        <a href="/capture" class="btn btn-primary">Start Capture →</a>
-    </div>
-
-    <div class="card">
-        <div class="card-icon">🧠</div>
-        <h3>2. Generate Embeddings</h3>
-        <p>Process captured images to create face embeddings database for recognition.</p>
-        <button id="generateBtn" class="btn btn-secondary">Generate Embeddings</button>
-        <div id="embeddingStatus" class="status-message"></div>
-    </div>
-
-    <div class="card">
-        <div class="card-icon">🔍</div>
-        <h3>3. Recognize Faces</h3>
-        <p>Use natural language commands to detect and identify people in the camera feed.</p>
-        <a href="/recognize" class="btn btn-primary">Start Recognition →</a>
-    </div>
-
-    <div class="card">
-        <div class="card-icon">⚙️</div>
-        <h3>4. Manage Dataset</h3>
-        <p>View, manage, and delete captured datasets for each person.</p>
-        <a href="/manage" class="btn btn-secondary">Manage Dataset →</a>
-    </div>
-</div>
-
-<div class="info-section">
-    <h2>System Status</h2>
-    <div class="status-grid">
-        <div class="status-item">
-            <span class="status-label">Embeddings Loaded:</span>
-            <span id="embeddingsStatus" class="status-value">Loading...</span>
-        </div>
-        <div class="status-item">
-            <span class="status-label">Total Persons:</span>
-            <span id="totalPersons" class="status-value">Loading...</span>
-        </div>
-        <div class="status-item">
-            <span class="status-label">Camera:</span>
-            <span id="cameraStatus" class="status-value">Loading...</span>
-        </div>
-    </div>
-</div>
-
-<div class="info-section">
-    <h2>How It Works</h2>
-    <div class="steps">
-        <div class="step">
-            <div class="step-number">1</div>
-            <div class="step-content">
-                <h4>Dataset Capture</h4>
-                <p>Capture multiple images of each person's face from different angles and lighting conditions.</p>
-            </div>
-        </div>
-        <div class="step">
-            <div class="step-number">2</div>
-            <div class="step-content">
-                <h4>Embedding Generation</h4>
-                <p>Process images using InsightFace to create unique face embeddings for each person.</p>
-            </div>
-        </div>
-        <div class="step">
-            <div class="step-number">3</div>
-            <div class="step-content">
-                <h4>Real-time Recognition</h4>
-                <p>Identify people in live camera feed and execute spatial queries like "person left of User1".</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="info-section">
-    <h2>Example Commands</h2>
-    <div class="command-examples">
-        <code>"detect the person right to User1"</code>
-        <code>"find second person on left of User1"</code>
-        <code>"show me first person right of User1"</code>
-        <code>"capture person left of User1"</code>
-    </div>
-</div>
-{% endblock %}
-
-{% block extra_js %}
+{% endblock %} {% block extra_js %}
 <script>
-// Load system status
-function loadStatus() {
-    fetch('/api/system_status')
-        .then(response => response.json())
-        .then(data => {
-            document.getElementById('embeddingsStatus').textContent = 
-                data.embeddings_loaded ? `✓ Yes (${data.embeddings_count} faces)` : '✗ No';
-            document.getElementById('totalPersons').textContent = data.dataset_persons;
-            document.getElementById('cameraStatus').textContent = 
-                data.camera_active ? '✓ Active' : '○ Inactive';
-        })
-        .catch(error => {
-            console.error('Error loading status:', error);
-        });
-}
+  let autoSnapshotEnabled = false;
+  let lastSnapshotTime = 0;
+  let currentCommand = null;
+  let lastDetection = null;
 
-// Generate embeddings
-document.getElementById('generateBtn').addEventListener('click', function() {
-    const btn = this;
-    const statusDiv = document.getElementById('embeddingStatus');
-    
-    btn.disabled = true;
-    btn.textContent = 'Generating...';
-    statusDiv.textContent = 'Processing dataset...';
-    statusDiv.className = 'status-message info';
-    
-    fetch('/api/generate_embeddings', {
-        method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-        btn.disabled = false;
-        btn.textContent = 'Generate Embeddings';
-        
-        if (data.success) {
-            statusDiv.textContent = `✓ ${data.message}`;
-            statusDiv.className = 'status-message success';
-            setTimeout(loadStatus, 500);
+  // Check dataset status on load
+  function checkDatasetStatus() {
+    fetch("/api/system_status")
+      .then((res) => res.json())
+      .then((data) => {
+        const hasDataset = data.dataset_persons > 0;
+        const hasEmbeddings = data.embeddings_loaded;
+
+        document.getElementById("totalPersons").textContent =
+          data.dataset_persons;
+        document.getElementById("totalEmbeddings").textContent =
+          data.embeddings_count;
+
+        if (!hasDataset) {
+          document.getElementById("noDatasetWarning").style.display = "flex";
+          document.getElementById("datasetStatus").textContent =
+            "⚠️ No dataset";
+          document.getElementById("datasetStatus").className =
+            "status-badge status-warning";
+        } else if (!hasEmbeddings) {
+          document.getElementById("noDatasetWarning").style.display = "flex";
+          document.getElementById("datasetStatus").textContent =
+            "⚠️ No embeddings";
+          document.getElementById("datasetStatus").className =
+            "status-badge status-warning";
         } else {
-            statusDiv.textContent = `✗ ${data.message}`;
-            statusDiv.className = 'status-message error';
+          document.getElementById("noDatasetWarning").style.display = "none";
+          document.getElementById("datasetStatus").textContent =
+            `✓ ${data.dataset_persons} persons`;
+          document.getElementById("datasetStatus").className =
+            "status-badge status-success";
         }
-    })
-    .catch(error => {
-        btn.disabled = false;
-        btn.textContent = 'Generate Embeddings';
-        statusDiv.textContent = '✗ Error generating embeddings';
-        statusDiv.className = 'status-message error';
-    });
-});
+      })
+      .catch((err) => console.error("Status check failed:", err));
+  }
 
-// Load status on page load
-loadStatus();
-setInterval(loadStatus, 5000); // Refresh every 5 seconds
+  // Execute command
+  document.getElementById("executeBtn").addEventListener("click", function () {
+    const command = document.getElementById("commandInput").value.trim();
+    const feedbackDiv = document.getElementById("commandFeedback");
+
+    if (!command) {
+      feedbackDiv.textContent = "⚠️ Please enter a command";
+      feedbackDiv.className = "feedback-box feedback-error";
+      return;
+    }
+
+    fetch("/api/set_command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: command }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          feedbackDiv.textContent = "✓ " + data.message;
+          feedbackDiv.className = "feedback-box feedback-success";
+          currentCommand = data.command;
+          document.getElementById("commandStatus").textContent = "▶ Active";
+          document.getElementById("commandStatus").className =
+            "status-badge status-active";
+        } else {
+          feedbackDiv.textContent = "✗ " + data.message;
+          feedbackDiv.className = "feedback-box feedback-error";
+        }
+      })
+      .catch((err) => {
+        feedbackDiv.textContent = "✗ Error executing command";
+        feedbackDiv.className = "feedback-box feedback-error";
+      });
+  });
+
+  // Clear command
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    document.getElementById("commandInput").value = "";
+    document.getElementById("commandFeedback").textContent = "";
+    currentCommand = null;
+    document.getElementById("commandStatus").textContent = "No command";
+    document.getElementById("commandStatus").className = "status-badge";
+
+    fetch("/api/clear_command", { method: "POST" });
+  });
+
+  // Example commands
+  document.querySelectorAll(".example-cmd").forEach((cmd) => {
+    cmd.addEventListener("click", function () {
+      document.getElementById("commandInput").value = this.dataset.cmd;
+    });
+  });
+
+  // Manual snapshot
+  document
+    .getElementById("manualSnapshotBtn")
+    .addEventListener("click", function () {
+      captureSnapshot("manual");
+    });
+
+  // Auto-snapshot toggle
+  document
+    .getElementById("autoSnapshotMode")
+    .addEventListener("change", function () {
+      autoSnapshotEnabled = this.checked;
+      document.getElementById("snapshotStatus").textContent =
+        autoSnapshotEnabled ? "✓ Auto-capture enabled" : "";
+    });
+
+  // Capture snapshot function
+  function captureSnapshot(mode) {
+    const now = Date.now();
+    if (now - lastSnapshotTime < 2000) return; // Prevent spam
+    lastSnapshotTime = now;
+
+    fetch("/api/capture_snapshot", { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          showSnapshot(data.filename, data.person_name || "Unknown");
+          document.getElementById("snapshotStatus").textContent =
+            `✓ Snapshot saved: ${data.filename}`;
+          document.getElementById("snapshotStatus").className =
+            "status-text status-success";
+          setTimeout(() => {
+            document.getElementById("snapshotStatus").textContent = "";
+          }, 3000);
+        }
+      })
+      .catch((err) => console.error("Snapshot failed:", err));
+  }
+
+  // Show snapshot in UI
+  function showSnapshot(filename, personName) {
+    const snapshotArea = document.getElementById("snapshotArea");
+    const snapshotImage = document.getElementById("snapshotImage");
+    const snapshotTime = document.getElementById("snapshotTime");
+    const snapshotPerson = document.getElementById("snapshotPerson");
+
+    snapshotImage.src = `/api/get_snapshot/${filename}`;
+    snapshotTime.textContent = new Date().toLocaleTimeString();
+    snapshotPerson.textContent = personName;
+    snapshotArea.style.display = "block";
+  }
+
+  // Close snapshot
+  document
+    .getElementById("closeSnapshot")
+    .addEventListener("click", function () {
+      document.getElementById("snapshotArea").style.display = "none";
+    });
+
+  // Poll for detection updates
+  setInterval(() => {
+    fetch("/api/detection_status")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.detection_info) {
+          const info = data.detection_info;
+          document.getElementById("faceCount").textContent =
+            info.total_faces || 0;
+          document.getElementById("anchorPerson").textContent =
+            info.anchor_detected ? currentCommand?.reference_person : "-";
+          document.getElementById("targetFound").textContent =
+            info.target_detected ? "✓ Yes" : "✗ No";
+
+          // Auto-snapshot logic
+          if (
+            autoSnapshotEnabled &&
+            currentCommand &&
+            info.target_detected &&
+            Date.now() - lastSnapshotTime > 5000
+          ) {
+            captureSnapshot("auto");
+          }
+
+          // Update detected faces list
+          updateDetectedFacesList(info.faces);
+          lastDetection = info;
+        }
+      })
+      .catch((err) => console.error("Detection poll failed:", err));
+  }, 1000); // Poll every second
+
+  // Update detected faces list
+  function updateDetectedFacesList(faces) {
+    const listDiv = document.getElementById("detectedFaces");
+    if (!faces || faces.length === 0) {
+      listDiv.innerHTML = '<p class="no-faces">No faces detected</p>';
+      return;
+    }
+
+    listDiv.innerHTML = faces
+      .map(
+        (face) =>
+          `<div class="face-item">
+            <span class="face-name">${face.name}</span>
+            <span class="face-score">${(face.score * 100).toFixed(1)}%</span>
+        </div>`,
+      )
+      .join("");
+  }
+
+  // Initialize
+  async function initializePage() {
+    // Ensure server has camera access
+    try {
+      await fetch("/api/acquire_camera", { method: "POST" });
+      console.log("Server camera acquired");
+    } catch (err) {
+      console.error("Failed to acquire server camera:", err);
+    }
+
+    checkDatasetStatus();
+  }
+
+  initializePage();
+  setInterval(checkDatasetStatus, 10000); // Check every 10 seconds
+
+  // Allow Enter key for command
+  document
+    .getElementById("commandInput")
+    .addEventListener("keypress", function (e) {
+      if (e.key === "Enter") {
+        document.getElementById("executeBtn").click();
+      }
+    });
 </script>
 {% endblock %}
