@@ -38,13 +38,6 @@ os.makedirs(SNAPSHOTS_PATH, exist_ok=True)
 
 # ── Fast cosine similarity — replaces sklearn ─────────────────────────────────
 def fast_cosine_batch(query_vecs, db_vecs_normalized):
-    """
-    query_vecs:           (N, D) float32 — normalized here
-    db_vecs_normalized:   (M, D) float32 — pre-normalized at load time
-    returns:              (N, M) similarity matrix
-
-    Single np.dot (BLAS dgemm) — ~4x faster than sklearn for N < 10 faces
-    """
     norms = np.linalg.norm(query_vecs, axis=1, keepdims=True)
     norms[norms == 0] = 1e-10
     return (query_vecs / norms) @ db_vecs_normalized.T
@@ -52,11 +45,6 @@ def fast_cosine_batch(query_vecs, db_vecs_normalized):
 
 # ── Lock-free single-slot buffer ──────────────────────────────────────────────
 class AtomicFrameSlot:
-    """
-    Writer always overwrites with latest value.
-    Reader always gets latest value.
-    Neither ever blocks — a single lightweight mutex guards only the pointer swap.
-    """
     def __init__(self):
         self._lock  = threading.Lock()
         self._frame = None
@@ -125,10 +113,12 @@ class SystemState:
         self.normalized_embeddings = None
 
         # Auto-snapshot
-        self.auto_snapshot_enabled = True
-        self.last_snapshot_time    = 0
-        self.snapshot_cooldown     = 8.0
-        self.last_snapshot_person  = None
+        self.auto_snapshot_enabled  = True
+        self.last_snapshot_time     = 0
+        self.snapshot_cooldown      = 8.0
+        self.last_snapshot_person   = None
+        # Pending auto-crop waiting for frontend verification
+        self.pending_auto_snapshot  = None
 
     # ── Model init ────────────────────────────────────────────────────────────
 
@@ -222,11 +212,6 @@ class SystemState:
 
     @staticmethod
     def validate_frame(frame):
-        """
-        Sample 5 pixels (4 corners + center) instead of computing mean of entire frame.
-        640x480x3 full mean = 921,600 operations.
-        Corner sampling = 5 operations. ~200x faster.
-        """
         if frame is None or frame.size == 0:
             return False
         if not FRAME_VALIDATION_ENABLED:
@@ -259,10 +244,6 @@ class SystemState:
     # ── Detection worker ──────────────────────────────────────────────────────
 
     def _detect_worker(self):
-        """
-        Runs at its own pace — completely decoupled from stream FPS.
-        If InsightFace takes 100ms, stream still runs at 30 FPS unaffected.
-        """
         while self.threads_running:
             try:
                 frame, command = self.detect_queue.get(timeout=0.05)
@@ -279,11 +260,6 @@ class SystemState:
     # ── Encode worker ─────────────────────────────────────────────────────────
 
     def _encode_worker(self):
-        """
-        Continuously encodes the annotated frame to JPEG.
-        Only re-encodes when the frame object changes (id() check = free).
-        Stream thread just copies bytes — zero encode work on hot path.
-        """
         params   = [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY]
         prev_id  = None
 
@@ -341,15 +317,47 @@ class SystemState:
                 if command_result and name == command_result.get('reference_person'):
                     anchor_face = {"bbox": bbox, "center_x": center_x}
 
-        # Auto-snapshot on clean frame (before drawing boxes)
-        if command_result and anchor_face is not None and self.auto_snapshot_enabled:
+        # Determine mode
+        mode = command_result.get('mode') if command_result else None
+
+        # ── Single-person mode: anchor IS the target ──────────────────────────
+        target_detected = False
+        if command_result and mode == 'single':
+            ref = command_result.get('reference_person')
+            if anchor_face is not None:  # anchor_face was set when ref person found
+                target_detected = True
+                # Auto-snapshot for single-person mode
+                if self.auto_snapshot_enabled:
+                    now = time.time()
+                    if now - self.last_snapshot_time > self.snapshot_cooldown:
+                        for d in detected_faces:
+                            if d["name"] == ref:
+                                self._save_crop(frame, d["bbox"], d["name"],
+                                                command_result)
+                                self.last_snapshot_time   = now
+                                self.last_snapshot_person = d["name"]
+                                break
+
+        # ── Directional mode: check person on correct side ────────────────────
+        elif command_result and anchor_face is not None and self.auto_snapshot_enabled:
             self._check_snapshot(frame, detected_faces, command_result, anchor_face)
+
+        # Compute target_detected for directional mode
+        if command_result and mode == 'directional' and anchor_face is not None:
+            direction = command_result.get('direction')
+            anchor_cx = anchor_face['center_x']
+            for d in detected_faces:
+                if d["name"] != command_result.get('reference_person'):
+                    if ((direction == "right" and d["center_x"] < anchor_cx) or
+                            (direction == "left"  and d["center_x"] > anchor_cx)):
+                        target_detected = True
+                        break
 
         annotated = self._draw(frame.copy(), detected_faces, anchor_face, command_result)
         return annotated, {
             'total_faces':     len(detected_faces),
             'anchor_detected': anchor_face is not None if command_result else False,
-            'target_detected': False,
+            'target_detected': target_detected,
             'faces': [{'name': f['name'], 'score': float(f['score'])}
                       for f in detected_faces]
         }
@@ -367,14 +375,12 @@ class SystemState:
                     (direction == "left"  and face_cx > anchor_cx)):
                 continue
             now = time.time()
-            pk  = data["name"]
-            if (now - self.last_snapshot_time > self.snapshot_cooldown or
-                    self.last_snapshot_person != pk):
-                self._save_crop(frame, data["bbox"], data["name"])
+            if now - self.last_snapshot_time > self.snapshot_cooldown:
+                self._save_crop(frame, data["bbox"], data["name"], command_result)
                 self.last_snapshot_time   = now
-                self.last_snapshot_person = pk
+                self.last_snapshot_person = data["name"]
 
-    def _save_crop(self, frame, bbox, person_name):
+    def _save_crop(self, frame, bbox, person_name, command_result=None):
         try:
             h, w = frame.shape[:2]
             x1, y1, x2, y2 = bbox
@@ -389,23 +395,76 @@ class SystemState:
             cv2.imwrite(os.path.join(SNAPSHOTS_PATH, fn), crop,
                         [cv2.IMWRITE_JPEG_QUALITY, 92])
             print(f"📸 {fn}")
+
+            # Build position description for verification UI
+            pos_desc = ''
+            if command_result:
+                mode = command_result.get('mode', 'directional')
+                ref  = command_result.get('reference_person', '')
+                if mode == 'single':
+                    pos_desc = f"Detected: {person_name}"
+                else:
+                    pos_desc = f"Person to the {command_result.get('direction','')} of {ref}"
+
+            # Store as pending snapshot so the frontend can display it
+            self.pending_auto_snapshot = {
+                'filename':    fn,
+                'person_name': person_name,
+                'position_desc': pos_desc,
+                'timestamp':   datetime.now().isoformat()
+            }
         except Exception as e:
             print(f"Snapshot error: {e}")
 
     def _draw(self, frame, detected_faces, anchor_face, command_result):
         anchor_name = command_result.get('reference_person') if command_result else None
         direction   = command_result.get('direction') if command_result else None
+        mode        = command_result.get('mode') if command_result else None
 
-        if command_result and anchor_face is None:
-            cv2.putText(frame, f"{anchor_name} not detected", (30, 40),
+        # ── Single-person mode: just highlight the target person ─────────────
+        if command_result and mode == 'single':
+            target_found = False
+            for d in detected_faces:
+                x1, y1, x2, y2 = d["bbox"]
+                if d["name"] == anchor_name:
+                    # Cyan box for the detected target
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 3)
+                    cv2.putText(frame, f"✓ {d['name']} ({d['score']:.2f})",
+                                (x1, y1-12), cv2.FONT_HERSHEY_SIMPLEX, 0.85,
+                                (0, 255, 255), 2)
+                    target_found = True
+                else:
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                    cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
+                                (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                                (255, 0, 0), 2)
+            if target_found:
+                cv2.putText(frame, f"✓ {anchor_name} detected", (30, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 255, 255), 3)
+            else:
+                cv2.putText(frame, f"❌ {anchor_name} not in frame", (30, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+            return frame
+
+        # ── No command: draw all faces in blue ───────────────────────────────
+        if not command_result:
+            for d in detected_faces:
+                x1, y1, x2, y2 = d["bbox"]
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
+                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+            return frame
+
+        # ── Directional mode ─────────────────────────────────────────────────
+        if anchor_face is None:
+            cv2.putText(frame, f"❌ {anchor_name} not detected", (30, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             for d in detected_faces:
                 x1, y1, x2, y2 = d["bbox"]
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
                 cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
                             (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-
-        elif command_result and anchor_face is not None:
+        else:
             ax1, ay1, ax2, ay2 = anchor_face["bbox"]
             anchor_cx = anchor_face["center_x"]
             cv2.rectangle(frame, (ax1, ay1), (ax2, ay2), (0, 255, 0), 2)
@@ -418,49 +477,26 @@ class SystemState:
                     continue
                 other_exist = True
                 x1, y1, x2, y2 = d["bbox"]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                on_side = ((direction == "right" and d["center_x"] < anchor_cx) or
+                           (direction == "left"  and d["center_x"] > anchor_cx))
+                color = (255, 0, 255) if on_side else (255, 0, 0)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
-                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-                if ((direction == "right" and d["center_x"] < anchor_cx) or
-                        (direction == "left"  and d["center_x"] > anchor_cx)):
+                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                if on_side:
                     person_found = True
-                    cv2.putText(frame, f"Person detected: {d['name']}", (30, 80),
+                    cv2.putText(frame, f"✓ Person detected: {d['name']}", (30, 80),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
 
             if not person_found:
-                msg = "Move the camera" if not other_exist \
-                      else f"No person found on {direction.upper()}"
+                msg = f"❌ No person found on {direction.upper()}"
                 cv2.putText(frame, msg, (30, 80),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-        else:
-            for d in detected_faces:
-                x1, y1, x2, y2 = d["bbox"]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(frame, f"{d['name']} ({d['score']:.2f})",
-                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
         return frame
-
 
 state = SystemState()
 
-
-# ============================================================================
-# STREAM — pure hot path, zero blocking operations
-# ============================================================================
-
 def generate_frames():
-    """
-    Stream loop does ONLY:
-      1. camera.grab()       — flush buffer, get latest frame
-      2. camera.retrieve()   — decode frame
-      3. cv2.flip()          — mirror
-      4. slot.write()        — atomic pointer swap (nanoseconds)
-      5. detect_queue.put_nowait() — non-blocking, drops if busy
-      6. encoded_slot.read() — atomic pointer read (nanoseconds)
-      7. yield bytes          — send to browser
-
-    No JPEG encoding. No face detection. No lock contention.
-    """
     camera = state.get_camera()
     if camera is None:
         err = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -543,11 +579,6 @@ def generate_frames():
             print(f"Stream error: {e}")
             state.consecutive_errors += 1
 
-
-# ============================================================================
-# EMBEDDINGS HELPER
-# ============================================================================
-
 def generate_embeddings_from_dataset():
     if not os.path.exists(DATASET_PATH) or not os.listdir(DATASET_PATH):
         return False, "Dataset folder is empty", 0
@@ -607,14 +638,9 @@ def generate_embeddings_from_dataset():
 
     return False, "No valid faces found", 0
 
-
-# ============================================================================
-# ROUTES
-# ============================================================================
-
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index2.html')
 
 @app.route('/capture')
 def capture_page():
@@ -775,98 +801,88 @@ def reconnect_camera():
     return jsonify({'success': False, 'message': 'Failed to reconnect'})
 
 
-# ═══ NEW: Verification & Sketch Routes ═══════════════════════════════════════
+# ─── Snapshot Verification & Sketch ──────────────────────────────────────────
+
+@app.route('/api/pending_snapshot')
+def get_pending_snapshot():
+    """Return the latest auto-crop waiting for user verification (then clear it)."""
+    snap = state.pending_auto_snapshot
+    if snap:
+        state.pending_auto_snapshot = None   # consume it
+        return jsonify({'success': True, 'snapshot': snap})
+    return jsonify({'success': False, 'snapshot': None})
+
 
 @app.route('/api/verify_snapshot', methods=['POST'])
 def verify_snapshot():
     """
-    Save the verified snapshot with proper naming.
-    Request body: {
-        "temp_filename": "auto_Alice_20260219_123456.jpg",
-        "person_name": "Alice",
-        "position_desc": "Person to the right of User1",
-        "create_sketch": true/false
-    }
+    Save verified snapshot with proper name.
+    Body: { temp_filename, person_name, position_desc, create_sketch }
     """
     try:
-        data = request.json or {}
+        import shutil
+        data          = request.json or {}
         temp_filename = data.get('temp_filename')
         person_name   = data.get('person_name', 'Unknown')
         position_desc = data.get('position_desc', '')
         create_sketch = data.get('create_sketch', False)
-        
+
         if not temp_filename:
             return jsonify({'success': False, 'message': 'No filename provided'})
-        
-        # Build paths
+
         temp_path = os.path.join(SNAPSHOTS_PATH, temp_filename)
         if not os.path.exists(temp_path):
             return jsonify({'success': False, 'message': 'Snapshot not found'})
-        
-        # Create verified filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = person_name.replace(" ", "_")
-        verified_filename = f"verified_{safe_name}_{timestamp}.jpg"
-        verified_path     = os.path.join(SNAPSHOTS_PATH, verified_filename)
-        
-        # Copy/rename the temp file
-        import shutil
+
+        ts               = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name        = person_name.replace(" ", "_")
+        verified_fn      = f"verified_{safe_name}_{ts}.jpg"
+        verified_path    = os.path.join(SNAPSHOTS_PATH, verified_fn)
         shutil.copy2(temp_path, verified_path)
-        
+
         result = {
-            'success': True,
-            'message': f'Verified snapshot saved as {verified_filename}',
-            'verified_filename': verified_filename,
-            'sketch_filename': None
+            'success':           True,
+            'message':           f'Saved as {verified_fn}',
+            'verified_filename': verified_fn,
+            'sketch_filename':   None
         }
-        
-        # Generate sketch if requested
+
         if create_sketch:
-            from sketch_generator import generate_sketch_with_label
-            sketch_filename = f"sketch_{safe_name}_{timestamp}.jpg"
-            sketch_path     = os.path.join(SNAPSHOTS_PATH, sketch_filename)
-            
-            sketch_success = generate_sketch_with_label(
-                verified_path,
-                sketch_path,
-                person_name,
-                position_desc
-            )
-            
-            if sketch_success:
-                result['sketch_filename'] = sketch_filename
-                result['message'] += f' | Sketch created: {sketch_filename}'
-            else:
-                result['message'] += ' | Sketch generation failed'
-        
+            try:
+                from sketch_generator import generate_sketch_with_label
+                sketch_fn   = f"sketch_{safe_name}_{ts}.jpg"
+                sketch_path = os.path.join(SNAPSHOTS_PATH, sketch_fn)
+                ok = generate_sketch_with_label(verified_path, sketch_path,
+                                                person_name, position_desc)
+                if ok:
+                    result['sketch_filename'] = sketch_fn
+                    result['message'] += f' | Sketch: {sketch_fn}'
+                else:
+                    result['message'] += ' | Sketch failed'
+            except Exception as e:
+                result['message'] += f' | Sketch error: {e}'
+
         return jsonify(result)
-        
+
     except Exception as e:
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+        return jsonify({'success': False, 'message': str(e)})
 
 
 @app.route('/api/discard_snapshot', methods=['POST'])
 def discard_snapshot():
-    """Delete a snapshot that was rejected during verification."""
+    """Delete a rejected snapshot."""
     try:
-        data = request.json or {}
+        data     = request.json or {}
         filename = data.get('filename')
         if not filename:
-            return jsonify({'success': False, 'message': 'No filename provided'})
-        
+            return jsonify({'success': False, 'message': 'No filename'})
         filepath = os.path.join(SNAPSHOTS_PATH, filename)
         if os.path.exists(filepath):
             os.remove(filepath)
             return jsonify({'success': True, 'message': 'Snapshot discarded'})
         return jsonify({'success': False, 'message': 'File not found'})
-        
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
-
-
-# ============================================================================
-# RUN
-# ============================================================================
 
 if __name__ == '__main__':
     print("=" * 70)
