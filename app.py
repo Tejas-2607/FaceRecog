@@ -640,7 +640,7 @@ def generate_embeddings_from_dataset():
 
 @app.route('/')
 def index():
-    return render_template('index2.html')
+    return render_template('index.html')
 
 @app.route('/capture')
 def capture_page():
@@ -849,7 +849,7 @@ def verify_snapshot():
 
         if create_sketch:
             try:
-                from sketch_generator import generate_sketch_with_label
+                from sketch_generator2 import generate_sketch_with_label
                 sketch_fn   = f"sketch_{safe_name}_{ts}.jpg"
                 sketch_path = os.path.join(SNAPSHOTS_PATH, sketch_fn)
                 ok = generate_sketch_with_label(verified_path, sketch_path,
