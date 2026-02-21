@@ -384,10 +384,26 @@ class SystemState:
         try:
             h, w = frame.shape[:2]
             x1, y1, x2, y2 = bbox
-            pad_x = int((x2 - x1) * 1.5)
-            pad_y = int((y2 - y1) * 2.5)
-            crop  = frame[max(0, y1-pad_y):min(h, y2+pad_y),
-                          max(0, x1-pad_x):min(w, x2+pad_x)]
+
+            # ── Full-body crop ─────────────────────────────────────────────
+            # InsightFace bbox covers only the face/head.
+            # Estimate full body: head height ≈ 1/7 of total body height.
+            # body_bottom ≈ y1 + face_height * 7.
+            # Wide horizontal padding to include shoulders and arms.
+            face_h  = y2 - y1
+            face_w  = x2 - x1
+            face_cx = (x1 + x2) // 2
+
+            body_height = int(face_h * 7.0)   # full body ~7× head height
+            body_width  = int(face_w * 4.5)   # shoulders ~2.5× head width each side
+            top_margin  = int(face_h * 0.35)  # slight headroom above hair
+
+            crop_x1 = max(0, face_cx - body_width  // 2)
+            crop_x2 = min(w, face_cx + body_width  // 2)
+            crop_y1 = max(0, y1      - top_margin)
+            crop_y2 = min(h, y1      + body_height)
+
+            crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
             if crop.size == 0:
                 return
             ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -849,7 +865,7 @@ def verify_snapshot():
 
         if create_sketch:
             try:
-                from sketch_generator2 import generate_sketch_with_label
+                from sketch_generator import generate_sketch_with_label
                 sketch_fn   = f"sketch_{safe_name}_{ts}.jpg"
                 sketch_path = os.path.join(SNAPSHOTS_PATH, sketch_fn)
                 ok = generate_sketch_with_label(verified_path, sketch_path,
