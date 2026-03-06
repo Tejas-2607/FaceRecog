@@ -8,3 +8,8 @@
 /sketch_try*.py
 /app*.py
 sketch_generator2.py
+command_parsing_enhanced*.py
+sketch_generator*.py
+/templates/index*.html
+/templates/base*.html
+/static/js/main*.js
