@@ -436,73 +436,100 @@ System{% endblock %} {% block extra_css %}
     color: #fff;
   }
 
-  /* Sketch generation UI */
-  .sketch-option {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(71, 85, 105, 0.5);
-  }
-
-  .sketch-checkbox-label {
+  /* ── Step indicator ──────────────────────────────────────────────── */
+  .step-bar {
     display: flex;
     align-items: center;
+    gap: 0;
+    margin-bottom: 1.5rem;
+  }
+  .step-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    flex: 1;
+    position: relative;
+  }
+  .step-item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 16px;
+    left: 60%;
+    width: 80%;
+    height: 2px;
+    background: #334155;
+    z-index: 0;
+  }
+  .step-item.done::after  { background: #10b981; }
+  .step-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: #1e293b; border: 2px solid #334155;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.85rem; color: #64748b;
+    position: relative; z-index: 1;
+    transition: all 0.3s;
+  }
+  .step-item.active .step-num {
+    background: #4f46e5; border-color: #4f46e5; color: #fff;
+    box-shadow: 0 0 0 4px rgba(79,70,229,0.25);
+  }
+  .step-item.done .step-num {
+    background: #10b981; border-color: #10b981; color: #fff;
+  }
+  .step-label {
+    font-size: 0.72rem; color: #64748b; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .step-item.active .step-label { color: #a5b4fc; }
+  .step-item.done  .step-label  { color: #34d399; }
+
+  /* ── System voice bar ─────────────────────────────────────────────── */
+  .voice-line-bar {
+    display: none;
+    align-items: flex-start;
     gap: 0.75rem;
-    cursor: pointer;
-    color: #cbd5e1;
-    font-size: 1rem;
-    font-weight: 600;
+    padding: 0.85rem 1.1rem;
+    background: rgba(79, 70, 229, 0.1);
+    border: 1px solid rgba(79, 70, 229, 0.35);
+    border-radius: 0.6rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.92rem;
+    color: #a5b4fc;
+    line-height: 1.5;
   }
+  .voice-line-bar.visible { display: flex; }
+  .voice-line-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 0.1rem; }
 
-  .sketch-checkbox-label input {
-    width: 20px;
-    height: 20px;
-    cursor: pointer;
-  }
+  /* ── Step panels ──────────────────────────────────────────────────── */
+  .step-panel { display: none; }
+  .step-panel.active { display: block; }
 
-  .sketch-preview {
-    margin-top: 1.5rem;
+  /* Sketch preview */
+  .sketch-preview-box {
+    margin-top: 1.25rem;
     padding: 1rem;
     background: rgba(15, 23, 42, 0.5);
     border-radius: 0.6rem;
     text-align: center;
+    border: 1px solid #334155;
   }
-
-  .sketch-preview img {
-    width: 100%;
-    max-height: 400px;
-    object-fit: contain;
-    border-radius: 0.5rem;
-    border: 2px solid #475569;
-    background: #fff;
+  .sketch-preview-box img {
+    width: 100%; max-height: 380px;
+    object-fit: contain; border-radius: 0.5rem;
+    border: 2px solid #475569; background: #fff;
   }
-
-  .sketch-status {
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    font-weight: 600;
+  .sketch-status-msg {
+    margin-top: 0.75rem; padding: 0.6rem 0.9rem;
+    border-radius: 0.4rem; font-weight: 600; font-size: 0.9rem;
   }
-
-  .sketch-status.processing {
-    background: rgba(14, 165, 233, 0.15);
-    color: #38bdf8;
-  }
-
-  .sketch-status.success {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
-  }
-
-  .sketch-status.error {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
-  }
+  .sketch-status-msg.processing { background:rgba(14,165,233,.15); color:#38bdf8; }
+  .sketch-status-msg.success    { background:rgba(16,185,129,.15); color:#34d399; }
+  .sketch-status-msg.error      { background:rgba(239,68,68,.15);  color:#f87171; }
 
   /* Responsive modal */
   @media (max-width: 900px) {
-    .modal-body {
-      grid-template-columns: 1fr;
-    }
+    .modal-body { grid-template-columns: 1fr; }
   }
 </style>
 {% endblock %} {% block content %}
@@ -664,80 +691,111 @@ System{% endblock %} {% block extra_css %}
 </div>
 <!-- .main-layout -->
 
-<!-- ═══ VERIFICATION MODAL ════════════════════════════════════════════ -->
+<!-- ═══ VERIFICATION MODAL — 3-step script flow ══════════════════════ -->
 <div id="verificationModal" class="verification-modal">
   <div class="modal-content">
+
     <div class="modal-header">
-      <h2 class="modal-title">📸 Verify Snapshot</h2>
+      <h2 class="modal-title" id="modalTitle">📸 Verify Detection</h2>
       <button id="closeModal" class="btn-close-modal">✕</button>
     </div>
 
-    <div class="modal-body">
-      <div class="snapshot-preview">
-        <h3>Captured Image</h3>
-        <img id="modalSnapshotImg" src="" alt="Captured snapshot" />
+    <!-- Step indicator -->
+    <div class="step-bar">
+      <div class="step-item active" id="stepItem1">
+        <div class="step-num">1</div>
+        <div class="step-label">Person</div>
       </div>
+      <div class="step-item" id="stepItem2">
+        <div class="step-num">2</div>
+        <div class="step-label">Snapshot</div>
+      </div>
+      <div class="step-item" id="stepItem3">
+        <div class="step-num">3</div>
+        <div class="step-label">Sketch</div>
+      </div>
+    </div>
 
-      <div class="verification-info">
-        <div class="info-field">
-          <div class="info-label">
-            Person Name
-            <small style="color: #64748b; font-weight: 400"
-              >(edit if needed)</small
-            >
+    <!-- System voice line -->
+    <div class="voice-line-bar visible" id="voiceLineBar">
+      <span class="voice-line-icon">🔊</span>
+      <span id="voiceLineText">Detecting…</span>
+    </div>
+
+    <!-- ── STEP 1: Confirm person ──────────────────────────────────── -->
+    <div class="step-panel active" id="stepPanel1">
+      <div class="modal-body">
+        <div class="snapshot-preview">
+          <h3>Captured Image</h3>
+          <img id="modalSnapshotImg" src="" alt="Captured snapshot" />
+        </div>
+        <div class="verification-info">
+          <div class="info-field">
+            <div class="info-label">Detected as
+              <small style="color:#64748b;font-weight:400"> (edit if wrong)</small>
+            </div>
+            <input type="text" id="modalPersonName" class="info-value"
+              style="background:transparent;border:none;border-bottom:1px solid #475569;
+                     width:100%;color:#fff;font-size:1.1rem;font-weight:600;
+                     outline:none;padding:0.1rem 0;"
+              placeholder="Person name" />
           </div>
-          <input
-            type="text"
-            id="modalPersonName"
-            class="info-value"
-            style="
-              background: transparent;
-              border: none;
-              border-bottom: 1px solid #475569;
-              width: 100%;
-              color: #fff;
-              font-size: 1.1rem;
-              font-weight: 600;
-              outline: none;
-              padding: 0.1rem 0;
-            "
-            placeholder="Enter person name"
-          />
+          <div class="info-field">
+            <div class="info-label">Position</div>
+            <div class="info-value" id="modalPositionText">—</div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Timestamp</div>
+            <div class="info-value" id="modalTimestamp">—</div>
+          </div>
         </div>
-
-        <div class="info-field">
-          <div class="info-label">Position Context</div>
-          <div class="info-value" id="modalPositionText">—</div>
-        </div>
-
-        <div class="info-field">
-          <div class="info-label">Timestamp</div>
-          <div class="info-value" id="modalTimestamp">—</div>
-        </div>
-
-        <div class="sketch-option">
-          <label class="sketch-checkbox-label">
-            <input type="checkbox" id="createSketchCheck" />
-            <span>🎨 Generate sketch diagram</span>
-          </label>
-        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnPersonYes" class="btn-modal-action btn-save">✓ Yes, this is correct</button>
+        <button id="btnPersonNo"  class="btn-modal-action btn-discard">✗ Wrong person — retake</button>
       </div>
     </div>
 
-    <div class="modal-actions">
-      <button id="btnSaveSnapshot" class="btn-modal-action btn-save">
-        ✓ Save Verified Snapshot
-      </button>
-      <button id="btnDiscardSnapshot" class="btn-modal-action btn-discard">
-        ✗ Discard
-      </button>
+    <!-- ── STEP 2: Confirm snapshot quality ───────────────────────── -->
+    <div class="step-panel" id="stepPanel2">
+      <div class="modal-body">
+        <div class="snapshot-preview">
+          <h3>Snapshot Quality</h3>
+          <img id="modalSnapshotImg2" src="" alt="Snapshot" />
+        </div>
+        <div class="verification-info">
+          <div class="info-field">
+            <div class="info-label">Person</div>
+            <div class="info-value" id="step2PersonName">—</div>
+          </div>
+          <div class="info-field" style="background:rgba(14,165,233,0.08);border-color:rgba(14,165,233,0.3)">
+            <div class="info-label" style="color:#38bdf8">Check the image</div>
+            <div class="info-value" style="font-size:0.9rem;color:#cbd5e1;font-weight:400">
+              Is the face clearly visible? Is the image sharp and well-lit?
+              If blurry or cut off, click Retake.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnSnapshotGood"  class="btn-modal-action btn-save">✓ Looks good — generate sketch</button>
+        <button id="btnSnapshotRetake" class="btn-modal-action btn-discard">↺ Blurry / cut off — retake</button>
+      </div>
     </div>
 
-    <div id="sketchPreviewSection" class="sketch-preview" style="display: none">
-      <h3>✨ Generated Sketch</h3>
-      <img id="sketchPreviewImg" src="" alt="Sketch" />
-      <div id="sketchStatus" class="sketch-status"></div>
+    <!-- ── STEP 3: Confirm sketch quality ─────────────────────────── -->
+    <div class="step-panel" id="stepPanel3">
+      <div class="sketch-preview-box">
+        <div id="sketchSpinner" class="sketch-status-msg processing">⏳ Generating sketch…</div>
+        <img id="sketchPreviewImg" src="" alt="Sketch" style="display:none" />
+        <div id="sketchStatusMsg" class="sketch-status-msg" style="display:none"></div>
+      </div>
+      <div class="modal-actions" id="sketchActions" style="margin-top:1rem;display:none">
+        <button id="btnSketchGood"   class="btn-modal-action btn-save">✓ Sketch looks good — finalise</button>
+        <button id="btnSketchRetake" class="btn-modal-action btn-discard">↺ Not good enough — retake</button>
+      </div>
     </div>
+
   </div>
 </div>
 
@@ -996,58 +1054,91 @@ System{% endblock %} {% block extra_css %}
   }
 
   /* =====================================================================
-   VERIFICATION MODAL
+   VERIFICATION MODAL — 3-step script flow
+   Step 1: Is this the right person?
+   Step 2: Is the snapshot clear?
+   Step 3: Is the sketch good enough?
+   Each step has a system voice line. Retake at any step resets the lock.
    ===================================================================== */
-  const verificationModal = document.getElementById("verificationModal");
-  const modalSnapshotImg = document.getElementById("modalSnapshotImg");
-  const modalPersonName = document.getElementById("modalPersonName");
-  const modalPositionText = document.getElementById("modalPositionText");
-  const modalTimestamp = document.getElementById("modalTimestamp");
-  const createSketchCheck = document.getElementById("createSketchCheck");
-  const btnSaveSnapshot = document.getElementById("btnSaveSnapshot");
-  const btnDiscardSnapshot = document.getElementById("btnDiscardSnapshot");
-  const sketchPreviewSection = document.getElementById("sketchPreviewSection");
-  const sketchPreviewImg = document.getElementById("sketchPreviewImg");
-  const sketchStatus = document.getElementById("sketchStatus");
+  const verificationModal  = document.getElementById("verificationModal");
+  const modalSnapshotImg   = document.getElementById("modalSnapshotImg");
+  const modalPersonName    = document.getElementById("modalPersonName");
+  const modalPositionText  = document.getElementById("modalPositionText");
+  const modalTimestamp     = document.getElementById("modalTimestamp");
+  const voiceLineBar       = document.getElementById("voiceLineBar");
+  const voiceLineText      = document.getElementById("voiceLineText");
 
-  document
-    .getElementById("closeModal")
-    .addEventListener("click", closeVerificationModal);
+  document.getElementById("closeModal").addEventListener("click", closeVerificationModal);
+
+  // ── Helpers ──────────────────────────────────────────────────────────
+  function setStep(n) {
+    [1,2,3].forEach(i => {
+      document.getElementById(`stepPanel${i}`).classList.toggle("active", i === n);
+      const si = document.getElementById(`stepItem${i}`);
+      si.classList.remove("active","done");
+      if (i < n)  si.classList.add("done");
+      if (i === n) si.classList.add("active");
+    });
+    const titles = { 1:"📸 Verify Detection", 2:"🔍 Snapshot Quality", 3:"✏️ Sketch Review" };
+    document.getElementById("modalTitle").textContent = titles[n];
+  }
+
+  // systemSay returns a Promise — await it before closing modal
+  // so the /api/speak request reaches the server before the page moves on.
+  function systemSay(text) {
+    voiceLineBar.classList.add("visible");
+    voiceLineText.textContent = text;
+    return fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    }).catch(() => {});
+  }
+
+  async function resetSnapshotLock() {
+    await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
+  }
 
   function openVerificationModal(filename, overrideName, overridePos) {
-    pendingSnapshot = { filename: filename };
+    pendingSnapshot = { filename };
 
-    // Fill modal data
     modalSnapshotImg.src = `/api/get_snapshot/${filename}`;
+    document.getElementById("modalSnapshotImg2").src = `/api/get_snapshot/${filename}`;
 
-    // Name: server override → currentCommand → fallback empty (user types it)
-    if (overrideName) {
-      modalPersonName.value = overrideName;
-    } else if (currentCommand) {
-      modalPersonName.value = currentCommand.reference_person || "";
-    } else {
-      modalPersonName.value = "";
-    }
+    const name = overrideName ||
+      (currentCommand ? currentCommand.reference_person : "") || "";
+    modalPersonName.value = name;
 
-    // Position context
     if (overridePos) {
       modalPositionText.textContent = overridePos;
     } else if (currentCommand) {
-      if (currentCommand.mode === "single") {
-        modalPositionText.textContent = `Single detection of ${currentCommand.reference_person}`;
-      } else {
-        modalPositionText.textContent = `Person to the ${currentCommand.direction} of ${currentCommand.reference_person}`;
-      }
+      modalPositionText.textContent = currentCommand.mode === "single"
+        ? `Single detection of ${currentCommand.reference_person}`
+        : `Person to the ${currentCommand.direction} of ${currentCommand.reference_person}`;
     } else {
       modalPositionText.textContent = "Manual snapshot";
     }
 
     modalTimestamp.textContent = new Date().toLocaleString();
-    createSketchCheck.checked = false;
-    sketchPreviewSection.style.display = "none";
 
+    // Reset sketch panel
+    document.getElementById("sketchSpinner").style.display   = "block";
+    document.getElementById("sketchPreviewImg").style.display = "none";
+    document.getElementById("sketchStatusMsg").style.display  = "none";
+    document.getElementById("sketchActions").style.display    = "none";
+
+    setStep(1);
     verificationModal.classList.add("visible");
-    // Focus name field so user can immediately correct it
+
+    // System speaks step-1 line (already spoken by backend on detection,
+    // but also show it in the voice bar so the operator sees it)
+    const ref  = currentCommand ? currentCommand.reference_person : "";
+    const mode = currentCommand ? currentCommand.mode : "";
+    if (mode === "single") {
+      systemSay(`I have detected ${name}. Could you confirm — is this the correct person?`);
+    } else {
+      systemSay(`I found someone at the detected position near ${ref}. Is this the right person?`);
+    }
     setTimeout(() => modalPersonName.focus(), 100);
   }
 
@@ -1056,73 +1147,124 @@ System{% endblock %} {% block extra_css %}
     pendingSnapshot = null;
   }
 
-  btnSaveSnapshot.addEventListener("click", async () => {
+  // ── Step 1: Person correct? ───────────────────────────────────────────
+  document.getElementById("btnPersonYes").addEventListener("click", () => {
     if (!pendingSnapshot) return;
+    document.getElementById("step2PersonName").textContent =
+      modalPersonName.value.trim() || "Unknown";
+    setStep(2);
+    systemSay("Great. Please check the snapshot — is the image clear and well framed?");
+  });
 
-    const createSketch = createSketchCheck.checked;
+  document.getElementById("btnPersonNo").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await systemSay("Understood. I will discard this and watch for the next detection.");
+    await fetch("/api/discard_snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: pendingSnapshot.filename })
+    }).catch(() => {});
+    await resetSnapshotLock();
+    closeVerificationModal();
+    Utils.notify("Wrong person — ready for next detection", "info");
+  });
 
-    const payload = {
-      temp_filename: pendingSnapshot.filename,
-      person_name: modalPersonName.value.trim() || "Unknown",
-      position_desc: modalPositionText.textContent,
-      create_sketch: createSketch,
-    };
+  // ── Step 2: Snapshot quality ──────────────────────────────────────────
+  document.getElementById("btnSnapshotGood").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await systemSay("Good. Generating the sketch now — please wait a moment.");
+    setStep(3);
 
+    const personName  = modalPersonName.value.trim() || "Unknown";
+    const positionDesc = modalPositionText.textContent;
+
+    // Save verified snapshot then generate sketch
     try {
-      // Show processing if sketch requested
-      if (createSketch) {
-        sketchPreviewSection.style.display = "block";
-        sketchStatus.textContent = "⏳ Generating sketch...";
-        sketchStatus.className = "sketch-status processing";
-      }
-
-      const response = await fetch("/api/verify_snapshot", {
+      const res  = await fetch("/api/verify_snapshot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          temp_filename: pendingSnapshot.filename,
+          person_name:   personName,
+          position_desc: positionDesc,
+          create_sketch: true,
+          company:       "AABBCC"
+        })
       });
+      const data = await res.json();
 
-      const data = await response.json();
+      document.getElementById("sketchSpinner").style.display = "none";
 
-      if (data.success) {
-        alert(`✓ ${data.message}`);
+      if (data.success && data.sketch_filename) {
+        const img = document.getElementById("sketchPreviewImg");
+        img.src = `/api/get_snapshot/${data.sketch_filename}`;
+        img.style.display = "block";
+        pendingSnapshot.verified_filename = data.verified_filename;
+        pendingSnapshot.sketch_filename   = data.sketch_filename;
 
-        // Show sketch if generated
-        if (data.sketch_filename) {
-          sketchPreviewImg.src = `/api/get_snapshot/${data.sketch_filename}`;
-          sketchStatus.textContent = "✓ Sketch generated successfully!";
-          sketchStatus.className = "sketch-status success";
-        }
+        const msg = document.getElementById("sketchStatusMsg");
+        msg.textContent  = "✓ Sketch generated";
+        msg.className    = "sketch-status-msg success";
+        msg.style.display = "block";
 
-        setTimeout(
-          () => {
-            closeVerificationModal();
-          },
-          createSketch ? 3000 : 500,
-        );
+        document.getElementById("sketchActions").style.display = "flex";
+        systemSay("Here is the sketch. Does it look good enough to send to the laser machine?");
       } else {
-        alert(`✗ ${data.message}`);
+        const msg = document.getElementById("sketchStatusMsg");
+        msg.textContent  = "✗ Sketch generation failed — " + (data.message || "");
+        msg.className    = "sketch-status-msg error";
+        msg.style.display = "block";
+        document.getElementById("sketchActions").style.display = "flex";
+        systemSay("I was not able to generate the sketch. Would you like to retake the snapshot?");
       }
-    } catch (error) {
-      alert("✗ Error saving snapshot");
-      console.error(error);
+    } catch (err) {
+      document.getElementById("sketchSpinner").style.display = "none";
+      const msg = document.getElementById("sketchStatusMsg");
+      msg.textContent = "✗ Network error generating sketch";
+      msg.className = "sketch-status-msg error";
+      msg.style.display = "block";
+      document.getElementById("sketchActions").style.display = "flex";
     }
   });
 
-  btnDiscardSnapshot.addEventListener("click", async () => {
+  document.getElementById("btnSnapshotRetake").addEventListener("click", async () => {
     if (!pendingSnapshot) return;
-    if (!confirm("Discard this snapshot?")) return;
+    await systemSay("No problem. I will discard this snapshot and take a fresh one.");
+    await fetch("/api/discard_snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: pendingSnapshot.filename })
+    }).catch(() => {});
+    await resetSnapshotLock();
+    closeVerificationModal();
+    Utils.notify("Snapshot discarded — ready to retake", "info");
+  });
 
-    try {
+  // ── Step 3: Sketch quality ────────────────────────────────────────────
+  document.getElementById("btnSketchGood").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    const name = modalPersonName.value.trim() || "Unknown";
+    await systemSay(`Excellent. Sketch for ${name} has been finalised and saved. Sending to the production line.`);
+    closeVerificationModal();
+    Utils.notify(`✓ Sketch for ${name} finalised`, "success");
+  });
+
+  document.getElementById("btnSketchRetake").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await systemSay("Understood. I will retake the snapshot for a better sketch.");
+    // Delete both temp and verified files if they exist
+    const filesToDelete = [pendingSnapshot.filename];
+    if (pendingSnapshot.verified_filename) filesToDelete.push(pendingSnapshot.verified_filename);
+    for (const fn of filesToDelete) {
       await fetch("/api/discard_snapshot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: pendingSnapshot.filename }),
-      });
-      closeVerificationModal();
-    } catch (error) {
-      console.error("Discard error:", error);
+        body: JSON.stringify({ filename: fn })
+      }).catch(() => {});
     }
+    await resetSnapshotLock();
+    closeVerificationModal();
+    Utils.notify("Sketch not accepted — ready to retake snapshot", "info");
   });
 
   /* =====================================================================

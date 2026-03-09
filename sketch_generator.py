@@ -27,8 +27,9 @@ def _build_sketch(img_bgr: np.ndarray) -> np.ndarray:
 
     # Step 2: Gaussian blur — larger kernel = smoother strokes
     # Kernel size scales with image width so it works on any resolution
+    # Slightly larger (5% vs 4%) for bolder strokes suited to laser engraving (change 15)
     h, w = gray_enh.shape[:2]
-    k = max(21, int(w * 0.04) | 1)   # odd, min 21, ~4% of width
+    k = max(25, int(w * 0.05) | 1)   # odd, min 25, ~5% of width
     blur = cv2.GaussianBlur(invert, (k, k), 0)
 
     # Step 3: Invert the blur
@@ -142,4 +143,84 @@ def generate_sketch_with_label(image_path: str, output_path: str,
 
     except Exception as e:
         print(f"Sketch labeling error: {e}")
+        return False
+
+
+def generate_sketch_for_laser(image_path: str, output_path: str,
+                               person_name: str,
+                               company: str = "AABBCC") -> bool:
+    """
+    Generate a laser-engraving-ready sketch with the standard engraving
+    text baked in: "Thanking {person_name} — from {company}"
+
+    Identical layout to generate_sketch_with_label() but:
+      - Larger blur kernel for stronger engraving strokes (change 15)
+      - Header bar contains the person name
+      - Footer bar contains the engraving text in the exact laser format
+      - Both bars are white-on-dark for easy reading on the board
+
+    Args:
+        image_path:  Path to input snapshot
+        output_path: Where to save the laser-ready sketch image
+        person_name: Name shown in the header (e.g. "Mr. Mohan")
+        company:     Company name used in engraving text (default "AABBCC")
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            print(f"generate_sketch_for_laser: cannot read {image_path}")
+            return False
+
+        # ── Build sketch ──────────────────────────────────────────────────
+        sketch_gray = _build_sketch(img)
+        h, w        = sketch_gray.shape[:2]
+        sketch_bgr  = cv2.cvtColor(sketch_gray, cv2.COLOR_GRAY2BGR)
+
+        # ── Canvas: dark header + sketch body + dark footer ───────────────
+        HEADER_H = 60
+        FOOTER_H = 52
+        canvas   = np.ones((HEADER_H + h + FOOTER_H, w, 3), dtype=np.uint8) * 255
+
+        # Dark header bar
+        cv2.rectangle(canvas, (0, 0), (w, HEADER_H), (30, 30, 30), -1)
+        # Dark footer bar
+        cv2.rectangle(canvas, (0, HEADER_H + h), (w, HEADER_H + h + FOOTER_H),
+                      (30, 30, 30), -1)
+
+        # Paste sketch between them
+        canvas[HEADER_H: HEADER_H + h, :] = sketch_bgr
+
+        font = cv2.FONT_HERSHEY_DUPLEX
+
+        # ── Header: person name in white ──────────────────────────────────
+        name_str = person_name.upper()
+        nfs      = 1.0
+        nthick   = 2
+        (ntw, _), _ = cv2.getTextSize(name_str, font, nfs, nthick)
+        if ntw > w - 40:
+            nfs = nfs * (w - 40) / ntw
+        cv2.putText(canvas, name_str,
+                    (20, HEADER_H - 18),
+                    font, nfs, (255, 255, 255), nthick, cv2.LINE_AA)
+
+        # ── Footer: engraving text in white ───────────────────────────────
+        engrave_text = f"Thanking {person_name}  \u2014  from {company}"
+        efs  = 0.6
+        (etw, _), _ = cv2.getTextSize(engrave_text, font, efs, 1)
+        if etw > w - 40:
+            efs = efs * (w - 40) / etw
+        text_y = HEADER_H + h + int(FOOTER_H * 0.65)
+        cv2.putText(canvas, engrave_text,
+                    (20, text_y),
+                    font, efs, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # ── Save ──────────────────────────────────────────────────────────
+        cv2.imwrite(output_path, canvas, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        return True
+
+    except Exception as e:
+        print(f"generate_sketch_for_laser error: {e}")
         return False

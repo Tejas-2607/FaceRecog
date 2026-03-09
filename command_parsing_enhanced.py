@@ -7,6 +7,8 @@ Supports positional commands:
   "detect second person right to User1"
   "find third person on left of Alice"
   "identify first person right of Bob"
+  "could you take a photo of the 3rd person to my left"
+  "locate our chief guest — he is 2 to the left of Raj"
   ... as well as single-person: "detect User1"
 """
 
@@ -17,7 +19,10 @@ import re
 ACTION_WORDS = {
     "detect", "find", "identify", "scan", "show", "look",
     "search", "locate", "check", "spot", "see", "get",
-    "who", "what", "is", "are", "there"
+    "who", "what", "is", "are", "there",
+    # natural spoken-command words (change 11)
+    "take", "grab", "capture", "snap", "photo", "picture",
+    "point", "highlight", "can", "could", "would", "please",
 }
 
 RIGHT_WORDS = {
@@ -35,6 +40,10 @@ POSITION_WORDS = {
     "third": 3, "3rd": 3,
     "fourth": 4, "4th": 4,
     "fifth": 5, "5th": 5,
+    # bare digit strings — so "3 to the left" is treated as position 3 (change 13)
+    "1": 1, "2": 2, "3": 3, "4": 4, "5": 5,
+    # natural aliases
+    "next": 1, "nearest": 1,
 }
 
 CONNECTOR_WORDS = {
@@ -42,6 +51,12 @@ CONNECTOR_WORDS = {
     "who", "beside", "next", "near", "adjacent", "side", "person",
     "someone", "anybody", "anyone", "standing", "sitting", "by",
     "from", "for", "me", "us", "them", "their", "and",
+    # spoken filler words — filter these out during name extraction (change 12)
+    # e.g. "could you find him", "locate our chief guest Mr Mohan"
+    "him", "her", "his", "hers", "it", "this", "that",
+    "just", "with", "our", "my", "your", "we",
+    "today", "guest", "chief", "sir", "madam",
+    "mr", "ms", "mrs", "dr", "here", "now", "okay", "ok",
 }
 
 # Noise for name extraction — exclude POSITION_WORDS so they don't eat names

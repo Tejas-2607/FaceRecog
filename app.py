@@ -1,9 +1,13 @@
+
 from flask import Flask, render_template, Response, request, jsonify, send_file
+import base64
+import shutil
 import cv2
 import insightface
 import pickle
 import numpy as np
 from command_parsing_enhanced import CommandParser
+from sketch_generator import generate_sketch_with_label
 import os
 from datetime import datetime
 import threading
@@ -11,6 +15,20 @@ import warnings
 import time
 from queue import Queue, Empty
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# pyttsx3 availability check — engine is NOT created here.
+# On Windows, pyttsx3 uses COM which is thread-bound: an engine created on
+# the main thread silently fails when used from any other thread.
+# Fix: create a fresh engine inside each speak() call on the worker thread itself.
+try:
+    import pyttsx3 as _pyttsx3
+    _TTS_AVAILABLE = True
+    print("✓ pyttsx3 available — voice output enabled")
+except ImportError:
+    _pyttsx3      = None
+    _TTS_AVAILABLE = False
+    print("⚠ pyttsx3 not found — install: pip install pyttsx3 --break-system-packages")
+    print("  Voice lines will print to terminal instead.")
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -24,17 +42,17 @@ EMBEDDINGS_PATH        = "embeddings/face_embeddings.pkl"
 SNAPSHOTS_PATH         = "snapshots"
 
 RECOGNITION_THRESHOLD  = 0.45
-# Detection size: (640,640) for GPU, (320,320) for CPU-only
-DETECTION_SIZE         = (640, 640)
+# Detection size: (320,320) for CPU-only laptops — fast enough to keep stream smooth
+DETECTION_SIZE         = (320, 320)
 # Run detection every N frames — stream always runs at full camera FPS
-DETECTION_EVERY_N      = 1          # GPU can keep up at every frame
-STREAM_JPEG_QUALITY    = 75
+DETECTION_EVERY_N      = 5          # CPU: run detection every 5th frame, stream stays smooth at full FPS
+STREAM_JPEG_QUALITY    = 60          # lower quality = faster JPEG encode on CPU
 MAX_CONSECUTIVE_ERRORS = 10
 FRAME_VALIDATION_ENABLED = True
 
 # ── Embedding generation config ───────────────────────────────────────────────
 EMBEDDING_CACHE_PATH   = "embeddings/file_hash_cache.pkl"  # per-file mtime cache
-EMBED_WORKERS          = 6      # parallel threads for imread + ONNX
+EMBED_WORKERS          = 2      # keep low on CPU-only laptops to avoid freezing during embedding
 EMBED_DET_SIZE         = (160, 160)   # smaller = faster for offline embedding
 MIN_FACE_DET_SCORE     = 0.50         # skip very-low-confidence detections
 USE_FLIP_AUGMENT       = True         # double data per image (mirror)
@@ -137,13 +155,23 @@ class SystemState:
         # Normalized embeddings (pre-computed at load)
         self.normalized_embeddings = None
 
-        # Auto-snapshot
+        # ── Snapshot — one-shot script-driven mode ────────────────────────
+        # snapshot_locked = True means a photo is already taken and waiting
+        # for the operator to finish the verify → sketch → confirm flow.
+        # Nothing new is taken until /api/reset_snapshot is called.
         self.auto_snapshot_enabled = True
-        self.last_snapshot_time    = 0
-        self.snapshot_cooldown     = 8.0
+        self.snapshot_locked       = False
         self.last_snapshot_person  = None
+        self._tts_lock             = threading.Lock()
         # Pending auto-crop waiting for frontend verification
         self.pending_auto_snapshot = None
+
+        # Pre-allocated draw buffer — reused every frame to avoid repeated ~921KB malloc
+        self._draw_buf = None
+
+        # Pan-hint string cache — only rebuild when text actually changes
+        self._pan_hint_cache     = None
+        self._pan_hint_cache_key = None
 
     # ── Model init ────────────────────────────────────────────────────────────
 
@@ -187,6 +215,34 @@ class SystemState:
         except Exception as e:
             print(f"❌ Embeddings error: {e}")
             return False
+
+    # ── Text-to-speech ───────────────────────────────────────────────────────
+
+    def speak(self, text: str):
+        """
+        Speak text aloud via pyttsx3 — non-blocking, never delays detection.
+
+        Engine is created fresh inside the worker thread on every call.
+        This is intentional: pyttsx3 on Windows uses COM which is thread-bound.
+        An engine initialised on the main thread silently does nothing when
+        runAndWait() is called from a different thread. Creating it on the same
+        thread that calls runAndWait() fixes the silence.
+        """
+        print(f"[SYSTEM] {text}")
+        if not _TTS_AVAILABLE:
+            return
+        def _run():
+            with self._tts_lock:
+                try:
+                    engine = _pyttsx3.init()
+                    engine.setProperty("rate", 160)
+                    engine.setProperty("volume", 1.0)
+                    engine.say(text)
+                    engine.runAndWait()
+                    engine.stop()
+                except Exception as e:
+                    print(f"TTS error: {e}")
+        threading.Thread(target=_run, daemon=True).start()
 
     # ── Camera ────────────────────────────────────────────────────────────────
 
@@ -328,7 +384,10 @@ class SystemState:
             self.load_embeddings()
 
         if self.normalized_embeddings is None or len(self.normalized_embeddings) == 0:
-            out = frame.copy()
+            if self._draw_buf is None or self._draw_buf.shape != frame.shape:
+                self._draw_buf = np.empty_like(frame)
+            np.copyto(self._draw_buf, frame)
+            out = self._draw_buf
             cv2.putText(out, "No dataset/identity registered", (30, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             return out, {'total_faces': 0, 'message': 'No dataset'}
@@ -360,7 +419,11 @@ class SystemState:
                     "bbox": bbox, "center_x": center_x
                 })
                 if command_result and name == command_result.get('reference_person'):
-                    anchor_face = {"bbox": bbox, "center_x": center_x}
+                    # Include name and score so single-mode target_face has all fields
+                    # Bug fix: anchor_face was missing "name"/"score" → "Unknown" in snapshot popup
+                    # and Detection error: 'name' / 'score' in _draw (both same root cause)
+                    anchor_face = {"bbox": bbox, "center_x": center_x,
+                                   "name": name, "score": best_score}
 
         # ── Camera centering hint (Feature 4) ─────────────────────────────
         # If a command is active and the anchor person is found but NOT centred,
@@ -380,6 +443,7 @@ class SystemState:
         target_detected = False
         target_face     = None
         if command_result and anchor_face is not None:
+            # Extract once — avoids repeated .get() calls throughout this block
             direction      = command_result.get('direction')
             wanted_pos     = command_result.get('position', 1)  # 1-based
             anchor_cx      = anchor_face["center_x"]
@@ -423,20 +487,24 @@ class SystemState:
             side_count = len([d for d in detected_faces
                                if d["name"] != command_result.get('reference_person')])
             if side_count == 0:
-                # No other people at all — tell operator to sweep camera
                 hints = ", ".join([f"{d}°" for d in PAN_HINT_DEGREES])
-                pan_hint = (f"↔ No person found — rotate camera {direction.upper()} "
-                            f"by {hints} to search")
+                _new_hint = (f"↔ No person found — rotate camera {direction.upper()} "
+                             f"by {hints} to search")
             else:
-                # Others exist but not enough on the commanded side
-                pan_hint = (f"↔ Only {side_count} person(s) visible — try rotating "
-                            f"camera {direction.upper()} to find person #{wanted_pos}")
+                _new_hint = (f"↔ Only {side_count} person(s) visible — try rotating "
+                             f"camera {direction.upper()} to find person #{wanted_pos}")
+            # Only rebuild string object when content actually changes
+            _cache_key = (direction, side_count, wanted_pos)
+            if _cache_key != self._pan_hint_cache_key:
+                self._pan_hint_cache     = _new_hint
+                self._pan_hint_cache_key = _cache_key
+            pan_hint = self._pan_hint_cache
 
         # Auto-snapshot on clean frame (before drawing boxes)
         if command_result and target_face is not None and self.auto_snapshot_enabled:
             self._check_snapshot_targeted(frame, target_face, command_result)
 
-        annotated = self._draw(frame.copy(), detected_faces, anchor_face,
+        annotated = self._draw(frame, detected_faces, anchor_face,
                                command_result, target_face, center_hint, pan_hint)
         return annotated, {
             'total_faces':     len(detected_faces),
@@ -449,14 +517,40 @@ class SystemState:
         }
 
     def _check_snapshot_targeted(self, frame, target_face, command_result):
-        """Snapshot only the resolved target face (supports 2nd/3rd etc.)."""
-        now  = time.time()
+        """
+        One-shot snapshot matching the demo script flow:
+          1. Target detected for the first time → take one photo, lock.
+          2. System speaks confirmation question.
+          3. Operator works through the 3-step modal (person → snapshot → sketch).
+          4. Any Retake/Discard calls /api/reset_snapshot → unlocks for next shot.
+        No more automatic 8-second repeat.
+        """
+        if self.snapshot_locked:
+            return
         name = target_face.get("name", "Unknown")
-        if (now - self.last_snapshot_time > self.snapshot_cooldown or
-                self.last_snapshot_person != name):
-            self._save_crop(frame, target_face["bbox"], name, command_result)
-            self.last_snapshot_time   = now
-            self.last_snapshot_person = name
+        if self.last_snapshot_person == name:
+            return
+
+        # Lock immediately so concurrent frames don't double-fire
+        self.snapshot_locked      = True
+        self.last_snapshot_person = name
+        self._save_crop(frame, target_face["bbox"], name, command_result)
+
+        # System speaks — matches script step where system announces the detection
+        mode = (command_result or {}).get("mode", "")
+        ref  = (command_result or {}).get("reference_person", "")
+        pos  = (command_result or {}).get("position", 1)
+        if mode == "single":
+            self.speak(
+                f"I have detected {name}. "
+                "Could you please confirm — is this the correct person?"
+            )
+        else:
+            ordinal = {1:"first", 2:"second", 3:"third"}.get(pos, f"number {pos}")
+            self.speak(
+                f"I have found someone at the {ordinal} position "
+                f"relative to {ref}. Is this the right person?"
+            )
 
     def _save_crop(self, frame, bbox, person_name, command_result=None):
         try:
@@ -510,6 +604,13 @@ class SystemState:
 
     def _draw(self, frame, detected_faces, anchor_face, command_result,
               target_face=None, center_hint=None, pan_hint=None):
+        # _draw_buf is a scratch buffer for drawing — we copy into it, draw on it,
+        # then return a SEPARATE copy so the encode thread never touches a buffer
+        # the detect thread is still writing into (freeze root cause on CPU).
+        if self._draw_buf is None or self._draw_buf.shape != frame.shape:
+            self._draw_buf = np.empty_like(frame)
+        np.copyto(self._draw_buf, frame)
+        frame = self._draw_buf
         fh, fw = frame.shape[:2]
         anchor_name = command_result.get('reference_person') if command_result else None
         direction   = command_result.get('direction') if command_result else None
@@ -574,14 +675,14 @@ class SystemState:
 
         # ── Pan hint (feature 5) — shown at bottom of frame ──────────────
         if pan_hint:
-            # Background strip at bottom
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (0, fh - 52), (fw, fh), (20, 20, 60), -1)
-            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+            # Direct filled rectangle — no frame.copy() or addWeighted needed
+            cv2.rectangle(frame, (0, fh - 52), (fw, fh), (20, 20, 60), -1)
             cv2.putText(frame, pan_hint, (20, fh - 16),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 220, 255), 2)
 
-        return frame
+        # Return a copy — encode thread must get its own buffer, not _draw_buf
+        # which the detect thread will overwrite on the next frame.
+        return frame.copy()
 
 
 state = SystemState()
@@ -927,7 +1028,6 @@ def clear_command():
 
 @app.route('/api/capture_frame', methods=['POST'])
 def capture_frame():
-    import base64
     frame, _ = state.raw_slot.read()
     if frame is not None:
         ret, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -990,7 +1090,7 @@ def system_status():
 def delete_person(person_name):
     pp = os.path.join(DATASET_PATH, person_name)
     if os.path.exists(pp):
-        import shutil; shutil.rmtree(pp)
+        shutil.rmtree(pp)
         return jsonify({'success': True, 'message': f'{person_name} deleted'})
     return jsonify({'success': False, 'message': 'Person not found'})
 
@@ -1017,11 +1117,14 @@ def upload_dataset():
 @app.route('/api/auto_snapshot', methods=['POST'])
 def toggle_auto_snapshot():
     data = request.json or {}
-    if 'enabled'  in data: state.auto_snapshot_enabled = bool(data['enabled'])
-    if 'cooldown' in data: state.snapshot_cooldown     = float(data['cooldown'])
+    if 'enabled' in data:
+        state.auto_snapshot_enabled = bool(data['enabled'])
+        if not state.auto_snapshot_enabled:
+            # Disabling resets any pending lock so it's ready next time
+            state.snapshot_locked      = False
+            state.last_snapshot_person = None
     return jsonify({'success': True,
-                    'auto_snapshot_enabled': state.auto_snapshot_enabled,
-                    'cooldown_seconds': state.snapshot_cooldown})
+                    'auto_snapshot_enabled': state.auto_snapshot_enabled})
 
 @app.route('/api/delete_embeddings', methods=['DELETE'])
 def delete_embeddings():
@@ -1091,7 +1194,6 @@ def verify_snapshot():
         verified_path     = os.path.join(SNAPSHOTS_PATH, verified_filename)
         
         # Copy/rename the temp file
-        import shutil
         shutil.copy2(temp_path, verified_path)
         
         result = {
@@ -1103,15 +1205,15 @@ def verify_snapshot():
         
         # Generate sketch if requested
         if create_sketch:
-            from sketch_generator import generate_sketch_with_label
             sketch_filename = f"sketch_{safe_name}_{timestamp}.jpg"
             sketch_path     = os.path.join(SNAPSHOTS_PATH, sketch_filename)
             
-            sketch_success = generate_sketch_with_label(
+            from sketch_generator import generate_sketch_for_laser
+            sketch_success = generate_sketch_for_laser(
                 verified_path,
                 sketch_path,
                 person_name,
-                position_desc
+                data.get('company', 'AABBCC')
             )
             
             if sketch_success:
@@ -1145,6 +1247,33 @@ def discard_snapshot():
         return jsonify({'success': False, 'message': str(e)})
 
 
+@app.route('/api/reset_snapshot', methods=['POST'])
+def reset_snapshot():
+    """
+    Unlock the snapshot system for a fresh shot.
+    Called when operator clicks Retake at any step — wrong person,
+    blurry snapshot, or bad sketch.
+    """
+    state.snapshot_locked       = False
+    state.last_snapshot_person  = None
+    state.pending_auto_snapshot = None
+    return jsonify({'success': True, 'message': 'Ready for next detection'})
+
+
+@app.route('/api/speak', methods=['POST'])
+def speak_route():
+    """
+    Trigger a system voice line from the frontend.
+    Body: { "text": "Some line to speak" }
+    Used at each modal step so the system speaks its confirmation dialogue.
+    """
+    text = (request.json or {}).get('text', '').strip()
+    if not text:
+        return jsonify({'success': False, 'message': 'No text provided'})
+    state.speak(text)
+    return jsonify({'success': True})
+
+
 # ============================================================================
 # RUN
 # ============================================================================
@@ -1160,7 +1289,7 @@ if __name__ == '__main__':
     print(f"Frame validate:  Corner-sampling (200x faster than np.mean)")
     print(f"JPEG encode:     Background thread (zero work on stream hot path)")
     print(f"Stream quality:  {STREAM_JPEG_QUALITY}%")
-    print(f"Auto-snapshot:   {state.snapshot_cooldown}s cooldown")
+    print(f"Auto-snapshot:   one-shot script mode")
     print("=" * 70)
 
     state.initialize_recognizer()
