@@ -1,7 +1,5 @@
-{% extends "base.html" %}
-{% block title %}Live Recognition - Face Recognition System{% endblock %}
-
-{% block extra_css %}
+{% extends "base.html" %} {% block title %}Live Recognition - Face Recognition
+System{% endblock %} {% block extra_css %}
 <style>
   /* ── Voice & Command UI ───────────────────────────────────────────── */
   .command-input-row {
@@ -19,7 +17,9 @@
     border-radius: 0.6rem;
     color: var(--white);
     font-size: 0.95rem;
-    transition: border-color 0.25s, box-shadow 0.25s;
+    transition:
+      border-color 0.25s,
+      box-shadow 0.25s;
   }
 
   .input-command:focus {
@@ -35,8 +35,13 @@
   }
 
   @keyframes borderPulse {
-    0%, 100% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22); }
-    50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.10); }
+    0%,
+    100% {
+      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.1);
+    }
   }
 
   .btn-mic {
@@ -68,8 +73,15 @@
   }
 
   @keyframes micPulse {
-    0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
-    50%       { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+    0%,
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+      transform: scale(1.08);
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+    }
   }
 
   .voice-status-bar {
@@ -85,25 +97,38 @@
     color: #f87171;
   }
 
-  .voice-status-bar.visible { display: flex; }
+  .voice-status-bar.visible {
+    display: flex;
+  }
 
   .voice-dot {
-    width: 8px; height: 8px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     background: #ef4444;
     animation: blink 1s infinite;
     flex-shrink: 0;
   }
 
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
 
-  .voice-status-text { flex: 1; }
+  .voice-status-text {
+    flex: 1;
+  }
 
   .btn-cancel-voice {
     padding: 0.25rem 0.65rem;
     border-radius: 0.375rem;
-    border: 1px solid rgba(239,68,68,0.4);
-    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.15);
     color: #f87171;
     font-size: 0.78rem;
     font-weight: 600;
@@ -113,7 +138,7 @@
   }
 
   .btn-cancel-voice:hover {
-    background: rgba(239,68,68,0.35);
+    background: rgba(239, 68, 68, 0.35);
     color: #fff;
   }
 
@@ -123,7 +148,8 @@
     margin-bottom: 0.75rem;
   }
 
-  .btn-primary-full, .btn-secondary-full {
+  .btn-primary-full,
+  .btn-secondary-full {
     flex: 1;
     padding: 0.7rem;
     border: none;
@@ -142,17 +168,17 @@
 
   .btn-primary-full:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(79,70,229,0.45);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.45);
   }
 
   .btn-secondary-full {
-    background: rgba(100,116,139,0.22);
+    background: rgba(100, 116, 139, 0.22);
     color: #cbd5e1;
-    border: 1px solid rgba(100,116,139,0.4);
+    border: 1px solid rgba(100, 116, 139, 0.4);
   }
 
   .btn-secondary-full:hover {
-    background: rgba(100,116,139,0.4);
+    background: rgba(100, 116, 139, 0.4);
     color: #fff;
   }
 
@@ -167,7 +193,7 @@
   .command-examples-mini {
     margin-top: 1rem;
     padding-top: 0.9rem;
-    border-top: 1px solid rgba(51,65,85,0.5);
+    border-top: 1px solid rgba(51, 65, 85, 0.5);
   }
 
   .example-label {
@@ -188,21 +214,21 @@
   .example-cmd {
     display: block;
     padding: 0.45rem 0.7rem;
-    background: rgba(15,23,42,0.55);
+    background: rgba(15, 23, 42, 0.55);
     border: 1px solid #334155;
     border-radius: 0.4rem;
     font-size: 0.78rem;
     cursor: pointer;
     transition: all 0.22s;
     color: #818cf8;
-    font-family: 'Courier New', monospace;
+    font-family: "Courier New", monospace;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .example-cmd:hover {
-    background: rgba(79,70,229,0.18);
+    background: rgba(79, 70, 229, 0.18);
     border-color: #6366f1;
     transform: translateX(4px);
     color: #a5b4fc;
@@ -217,15 +243,15 @@
   }
 
   .feedback-success {
-    background: rgba(16,185,129,0.15);
+    background: rgba(16, 185, 129, 0.15);
     color: #34d399;
-    border: 1px solid rgba(16,185,129,0.3);
+    border: 1px solid rgba(16, 185, 129, 0.3);
   }
 
   .feedback-error {
-    background: rgba(239,68,68,0.15);
+    background: rgba(239, 68, 68, 0.15);
     color: #f87171;
-    border: 1px solid rgba(239,68,68,0.3);
+    border: 1px solid rgba(239, 68, 68, 0.3);
   }
 
   /* ── VERIFICATION MODAL ────────────────────────────────────────────── */
@@ -249,8 +275,12 @@
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .modal-content {
@@ -267,8 +297,14 @@
   }
 
   @keyframes slideUp {
-    from { transform: translateY(50px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+    from {
+      transform: translateY(50px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
 
   .modal-header {
@@ -400,101 +436,131 @@
     color: #fff;
   }
 
-  /* Sketch generation UI */
-  .sketch-option {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(71, 85, 105, 0.5);
-  }
-
-  .sketch-checkbox-label {
+  /* ── Step indicator ──────────────────────────────────────────────── */
+  .step-bar {
     display: flex;
     align-items: center;
+    gap: 0;
+    margin-bottom: 1.5rem;
+  }
+  .step-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    flex: 1;
+    position: relative;
+  }
+  .step-item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 16px;
+    left: 60%;
+    width: 80%;
+    height: 2px;
+    background: #334155;
+    z-index: 0;
+  }
+  .step-item.done::after  { background: #10b981; }
+  .step-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: #1e293b; border: 2px solid #334155;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.85rem; color: #64748b;
+    position: relative; z-index: 1;
+    transition: all 0.3s;
+  }
+  .step-item.active .step-num {
+    background: #4f46e5; border-color: #4f46e5; color: #fff;
+    box-shadow: 0 0 0 4px rgba(79,70,229,0.25);
+  }
+  .step-item.done .step-num {
+    background: #10b981; border-color: #10b981; color: #fff;
+  }
+  .step-label {
+    font-size: 0.72rem; color: #64748b; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .step-item.active .step-label { color: #a5b4fc; }
+  .step-item.done  .step-label  { color: #34d399; }
+
+  /* ── System voice bar ─────────────────────────────────────────────── */
+  .voice-line-bar {
+    display: none;
+    align-items: flex-start;
     gap: 0.75rem;
-    cursor: pointer;
-    color: #cbd5e1;
-    font-size: 1rem;
-    font-weight: 600;
+    padding: 0.85rem 1.1rem;
+    background: rgba(79, 70, 229, 0.1);
+    border: 1px solid rgba(79, 70, 229, 0.35);
+    border-radius: 0.6rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.92rem;
+    color: #a5b4fc;
+    line-height: 1.5;
   }
+  .voice-line-bar.visible { display: flex; }
+  .voice-line-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 0.1rem; }
 
-  .sketch-checkbox-label input {
-    width: 20px;
-    height: 20px;
-    cursor: pointer;
-  }
+  /* ── Step panels ──────────────────────────────────────────────────── */
+  .step-panel { display: none; }
+  .step-panel.active { display: block; }
 
-  .sketch-preview {
-    margin-top: 1.5rem;
+  /* Sketch preview */
+  .sketch-preview-box {
+    margin-top: 1.25rem;
     padding: 1rem;
     background: rgba(15, 23, 42, 0.5);
     border-radius: 0.6rem;
     text-align: center;
+    border: 1px solid #334155;
   }
-
-  .sketch-preview img {
-    width: 100%;
-    max-height: 400px;
-    object-fit: contain;
-    border-radius: 0.5rem;
-    border: 2px solid #475569;
-    background: #fff;
+  .sketch-preview-box img {
+    width: 100%; max-height: 380px;
+    object-fit: contain; border-radius: 0.5rem;
+    border: 2px solid #475569; background: #fff;
   }
-
-  .sketch-status {
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    font-weight: 600;
+  .sketch-status-msg {
+    margin-top: 0.75rem; padding: 0.6rem 0.9rem;
+    border-radius: 0.4rem; font-weight: 600; font-size: 0.9rem;
   }
-
-  .sketch-status.processing {
-    background: rgba(14, 165, 233, 0.15);
-    color: #38bdf8;
-  }
-
-  .sketch-status.success {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
-  }
-
-  .sketch-status.error {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
-  }
+  .sketch-status-msg.processing { background:rgba(14,165,233,.15); color:#38bdf8; }
+  .sketch-status-msg.success    { background:rgba(16,185,129,.15); color:#34d399; }
+  .sketch-status-msg.error      { background:rgba(239,68,68,.15);  color:#f87171; }
 
   /* Responsive modal */
   @media (max-width: 900px) {
-    .modal-body {
-      grid-template-columns: 1fr;
-    }
+    .modal-body { grid-template-columns: 1fr; }
   }
 </style>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <div class="main-layout">
-
   <!-- ── Left: Video ──────────────────────────────────────────────── -->
   <div class="video-section-main">
     <div class="video-header">
       <h2>🎥 Live Recognition</h2>
       <div class="status-indicator">
-        <span id="datasetStatus"  class="status-badge">Loading...</span>
-        <span id="commandStatus"  class="status-badge">No command</span>
+        <span id="datasetStatus" class="status-badge">Loading...</span>
+        <span id="commandStatus" class="status-badge">No command</span>
       </div>
     </div>
 
     <div class="video-container-large">
-      <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Live Video Feed" />
+      <img
+        id="videoFeed"
+        src="{{ url_for('video_feed') }}"
+        alt="Live Video Feed"
+      />
     </div>
 
-    <div id="noDatasetWarning" class="warning-message" style="display:none">
+    <div id="noDatasetWarning" class="warning-message" style="display: none">
       <span class="warning-icon">⚠️</span>
-      <span class="warning-text">No persons in dataset. Please add users first.</span>
+      <span class="warning-text"
+        >No persons in dataset. Please add users first.</span
+      >
       <a href="/capture" class="btn-warning-link">Add User</a>
     </div>
 
-    <div id="snapshotArea" class="snapshot-display" style="display:none">
+    <div id="snapshotArea" class="snapshot-display" style="display: none">
       <div class="snapshot-header">
         <h3>📸 Latest Snapshot</h3>
         <button id="closeSnapshot" class="btn-close-snap">✕</button>
@@ -509,7 +575,6 @@
 
   <!-- ── Right: Controls ─────────────────────────────────────────── -->
   <div class="controls-section">
-
     <!-- Command Input Card -->
     <div class="control-card">
       <h3>🎯 Command Control</h3>
@@ -539,7 +604,7 @@
 
         <div class="command-buttons">
           <button id="executeBtn" class="btn-primary-full">▶ Execute</button>
-          <button id="clearBtn"   class="btn-secondary-full">✕ Clear</button>
+          <button id="clearBtn" class="btn-secondary-full">✕ Clear</button>
         </div>
 
         <div id="commandFeedback" class="feedback-box"></div>
@@ -553,10 +618,18 @@
         <p class="example-label">Examples (click to use)</p>
         <div class="examples-grid">
           <code class="example-cmd" data-cmd="detect User1">detect User1</code>
-          <code class="example-cmd" data-cmd="identify Alice">identify Alice</code>
-          <code class="example-cmd" data-cmd="find person right to User1">find person right to User1</code>
-          <code class="example-cmd" data-cmd="scan left side of Bob">scan left side of Bob</code>
-          <code class="example-cmd" data-cmd="who is standing right of Sarah">who is standing right of Sarah</code>
+          <code class="example-cmd" data-cmd="identify Alice"
+            >identify Alice</code
+          >
+          <code class="example-cmd" data-cmd="find person right to User1"
+            >find person right to User1</code
+          >
+          <code class="example-cmd" data-cmd="scan left side of Bob"
+            >scan left side of Bob</code
+          >
+          <code class="example-cmd" data-cmd="who is standing right of Sarah"
+            >who is standing right of Sarah</code
+          >
         </div>
       </div>
     </div>
@@ -585,7 +658,7 @@
       <div class="info-stats">
         <div class="stat-row">
           <span class="stat-label">Faces Detected:</span>
-          <span id="faceCount"    class="stat-value">0</span>
+          <span id="faceCount" class="stat-value">0</span>
         </div>
         <div class="stat-row">
           <span class="stat-label">Anchor Person:</span>
@@ -593,7 +666,7 @@
         </div>
         <div class="stat-row">
           <span class="stat-label">Target Found:</span>
-          <span id="targetFound"  class="stat-value">-</span>
+          <span id="targetFound" class="stat-value">-</span>
         </div>
       </div>
       <div id="detectedFaces" class="detected-faces-list"></div>
@@ -613,495 +686,691 @@
         </div>
       </div>
     </div>
+  </div>
+  <!-- .controls-section -->
+</div>
+<!-- .main-layout -->
 
-  </div><!-- .controls-section -->
-</div><!-- .main-layout -->
-
-<!-- ═══ VERIFICATION MODAL ════════════════════════════════════════════ -->
+<!-- ═══ VERIFICATION MODAL — 3-step script flow ══════════════════════ -->
 <div id="verificationModal" class="verification-modal">
   <div class="modal-content">
+
     <div class="modal-header">
-      <h2 class="modal-title">📸 Verify Snapshot</h2>
+      <h2 class="modal-title" id="modalTitle">📸 Verify Detection</h2>
       <button id="closeModal" class="btn-close-modal">✕</button>
     </div>
 
-    <div class="modal-body">
-      <div class="snapshot-preview">
-        <h3>Captured Image</h3>
-        <img id="modalSnapshotImg" src="" alt="Captured snapshot" />
+    <!-- Step indicator -->
+    <div class="step-bar">
+      <div class="step-item active" id="stepItem1">
+        <div class="step-num">1</div>
+        <div class="step-label">Person</div>
       </div>
-
-      <div class="verification-info">
-        <div class="info-field">
-          <div class="info-label">Person Name</div>
-          <div class="info-value" id="modalPersonName">—</div>
-        </div>
-
-        <div class="info-field">
-          <div class="info-label">Position Context</div>
-          <div class="info-value" id="modalPositionText">—</div>
-        </div>
-
-        <div class="info-field">
-          <div class="info-label">Timestamp</div>
-          <div class="info-value" id="modalTimestamp">—</div>
-        </div>
-
-        <div class="sketch-option">
-          <label class="sketch-checkbox-label">
-            <input type="checkbox" id="createSketchCheck" />
-            <span>🎨 Generate sketch diagram</span>
-          </label>
-        </div>
+      <div class="step-item" id="stepItem2">
+        <div class="step-num">2</div>
+        <div class="step-label">Snapshot</div>
+      </div>
+      <div class="step-item" id="stepItem3">
+        <div class="step-num">3</div>
+        <div class="step-label">Sketch</div>
       </div>
     </div>
 
-    <div class="modal-actions">
-      <button id="btnSaveSnapshot" class="btn-modal-action btn-save">
-        ✓ Save Verified Snapshot
-      </button>
-      <button id="btnDiscardSnapshot" class="btn-modal-action btn-discard">
-        ✗ Discard
-      </button>
+    <!-- System voice line -->
+    <div class="voice-line-bar visible" id="voiceLineBar">
+      <span class="voice-line-icon">🔊</span>
+      <span id="voiceLineText">Detecting…</span>
     </div>
 
-    <div id="sketchPreviewSection" class="sketch-preview" style="display:none">
-      <h3>✨ Generated Sketch</h3>
-      <img id="sketchPreviewImg" src="" alt="Sketch" />
-      <div id="sketchStatus" class="sketch-status"></div>
+    <!-- ── STEP 1: Confirm person ──────────────────────────────────── -->
+    <div class="step-panel active" id="stepPanel1">
+      <div class="modal-body">
+        <div class="snapshot-preview">
+          <h3>Captured Image</h3>
+          <img id="modalSnapshotImg" src="" alt="Captured snapshot" />
+        </div>
+        <div class="verification-info">
+          <div class="info-field">
+            <div class="info-label">Detected as
+              <small style="color:#64748b;font-weight:400"> (edit if wrong)</small>
+            </div>
+            <input type="text" id="modalPersonName" class="info-value"
+              style="background:transparent;border:none;border-bottom:1px solid #475569;
+                     width:100%;color:#fff;font-size:1.1rem;font-weight:600;
+                     outline:none;padding:0.1rem 0;"
+              placeholder="Person name" />
+          </div>
+          <div class="info-field">
+            <div class="info-label">Position</div>
+            <div class="info-value" id="modalPositionText">—</div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Timestamp</div>
+            <div class="info-value" id="modalTimestamp">—</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnPersonYes" class="btn-modal-action btn-save">✓ Yes, this is correct</button>
+        <button id="btnPersonNo"  class="btn-modal-action btn-discard">✗ Wrong person — retake</button>
+      </div>
     </div>
+
+    <!-- ── STEP 2: Confirm snapshot quality ───────────────────────── -->
+    <div class="step-panel" id="stepPanel2">
+      <div class="modal-body">
+        <div class="snapshot-preview">
+          <h3>Snapshot Quality</h3>
+          <img id="modalSnapshotImg2" src="" alt="Snapshot" />
+        </div>
+        <div class="verification-info">
+          <div class="info-field">
+            <div class="info-label">Person</div>
+            <div class="info-value" id="step2PersonName">—</div>
+          </div>
+          <div class="info-field" style="background:rgba(14,165,233,0.08);border-color:rgba(14,165,233,0.3)">
+            <div class="info-label" style="color:#38bdf8">Check the image</div>
+            <div class="info-value" style="font-size:0.9rem;color:#cbd5e1;font-weight:400">
+              Is the face clearly visible? Is the image sharp and well-lit?
+              If blurry or cut off, click Retake.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnSnapshotGood"  class="btn-modal-action btn-save">✓ Looks good — generate sketch</button>
+        <button id="btnSnapshotRetake" class="btn-modal-action btn-discard">↺ Blurry / cut off — retake</button>
+      </div>
+    </div>
+
+    <!-- ── STEP 3: Confirm sketch quality ─────────────────────────── -->
+    <div class="step-panel" id="stepPanel3">
+      <div class="sketch-preview-box">
+        <div id="sketchSpinner" class="sketch-status-msg processing">⏳ Generating sketch…</div>
+        <img id="sketchPreviewImg" src="" alt="Sketch" style="display:none" />
+        <div id="sketchStatusMsg" class="sketch-status-msg" style="display:none"></div>
+      </div>
+      <div class="modal-actions" id="sketchActions" style="margin-top:1rem;display:none">
+        <button id="btnSketchGood"   class="btn-modal-action btn-save">✓ Sketch looks good — finalise</button>
+        <button id="btnSketchRetake" class="btn-modal-action btn-discard">↺ Not good enough — retake</button>
+      </div>
+    </div>
+
   </div>
 </div>
 
-{% endblock %}
-
-{% block extra_js %}
+{% endblock %} {% block extra_js %}
 <script>
-/* =====================================================================
+  /* =====================================================================
    STATE
    ===================================================================== */
-let autoSnapshotEnabled  = true;
-let lastSnapshotTime     = 0;
-let currentCommand       = null;
-let pendingSnapshot      = null;  // Stores snapshot awaiting verification
+  let autoSnapshotEnabled = true;
+  let lastSnapshotTime = 0;
+  let currentCommand = null;
+  let pendingSnapshot = null; // Stores snapshot awaiting verification
 
-/* =====================================================================
+  /* =====================================================================
    VOICE INPUT
    ===================================================================== */
-const SpeechRecognition =
-  window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
-let recognition   = null;
-let isRecording   = false;
-let voiceAborted  = false;
+  let recognition = null;
+  let isRecording = false;
+  let voiceAborted = false;
 
-const micBtn          = document.getElementById('micBtn');
-const cancelVoiceBtn  = document.getElementById('cancelVoiceBtn');
-const voiceStatusBar  = document.getElementById('voiceStatusBar');
-const voiceStatusText = document.getElementById('voiceStatusText');
-const commandInput    = document.getElementById('commandInput');
-const noSpeechNote    = document.getElementById('noSpeechNote');
+  const micBtn = document.getElementById("micBtn");
+  const cancelVoiceBtn = document.getElementById("cancelVoiceBtn");
+  const voiceStatusBar = document.getElementById("voiceStatusBar");
+  const voiceStatusText = document.getElementById("voiceStatusText");
+  const commandInput = document.getElementById("commandInput");
+  const noSpeechNote = document.getElementById("noSpeechNote");
 
-if (!SpeechRecognition) {
-  micBtn.style.display = 'none';
-  noSpeechNote.style.display = 'block';
-} else {
-  setupSpeechRecognition();
-}
-
-function setupSpeechRecognition() {
-  recognition = new SpeechRecognition();
-  recognition.lang            = 'en-US';
-  recognition.interimResults  = true;
-  recognition.maxAlternatives = 1;
-  recognition.continuous      = false;
-
-  recognition.onresult = (event) => {
-    let interim   = '';
-    let finalText = '';
-
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        finalText += transcript;
-      } else {
-        interim += transcript;
-      }
-    }
-
-    if (finalText) {
-      commandInput.value = finalText.trim();
-      voiceStatusText.textContent = `✓ Got: "${finalText.trim()}"`;
-      stopRecording(false);
-    } else if (interim) {
-      commandInput.value = interim;
-      voiceStatusText.textContent = `Listening… "${interim}"`;
-    }
-  };
-
-  recognition.onerror = (event) => {
-    if (voiceAborted) return;
-    const msgs = {
-      'no-speech':     'No speech detected. Try again.',
-      'audio-capture': 'Microphone not found or blocked.',
-      'not-allowed':   'Microphone permission denied.',
-      'network':       'Network error during speech recognition.',
-    };
-    voiceStatusText.textContent = msgs[event.error] || `Error: ${event.error}`;
-    stopRecording(false);
-  };
-
-  recognition.onend = () => {
-    if (voiceAborted) commandInput.value = '';
-    stopRecording(false);
-  };
-}
-
-micBtn.addEventListener('click', () => {
-  if (isRecording) {
-    stopRecording(true);
+  if (!SpeechRecognition) {
+    micBtn.style.display = "none";
+    noSpeechNote.style.display = "block";
   } else {
-    startRecording();
+    setupSpeechRecognition();
   }
-});
 
-cancelVoiceBtn.addEventListener('click', () => {
-  stopRecording(true, true);
-});
+  function setupSpeechRecognition() {
+    recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = false;
 
-function startRecording() {
-  if (!recognition) return;
-  voiceAborted          = false;
-  isRecording           = true;
-  commandInput.value    = '';
-  commandInput.classList.add('voice-active');
-  micBtn.classList.add('recording');
-  micBtn.title          = 'Recording… click to stop';
-  micBtn.textContent    = '⏹';
-  voiceStatusBar.classList.add('visible');
-  voiceStatusText.textContent = 'Listening…';
+    recognition.onresult = (event) => {
+      let interim = "";
+      let finalText = "";
 
-  try { recognition.start(); } catch(e) {}
-}
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
 
-function stopRecording(userStopped = false, cancel = false) {
-  if (!isRecording && !cancel) return;
+      if (finalText) {
+        commandInput.value = finalText.trim();
+        voiceStatusText.textContent = `✓ Got: "${finalText.trim()}"`;
+        stopRecording(false);
+      } else if (interim) {
+        commandInput.value = interim;
+        voiceStatusText.textContent = `Listening… "${interim}"`;
+      }
+    };
 
-  if (cancel) voiceAborted = true;
+    recognition.onerror = (event) => {
+      if (voiceAborted) return;
+      const msgs = {
+        "no-speech": "No speech detected. Try again.",
+        "audio-capture": "Microphone not found or blocked.",
+        "not-allowed": "Microphone permission denied.",
+        network: "Network error during speech recognition.",
+      };
+      voiceStatusText.textContent =
+        msgs[event.error] || `Error: ${event.error}`;
+      stopRecording(false);
+    };
 
-  isRecording = false;
-  commandInput.classList.remove('voice-active');
-  micBtn.classList.remove('recording');
-  micBtn.title     = 'Start voice input';
-  micBtn.textContent = '🎤';
+    recognition.onend = () => {
+      if (voiceAborted) commandInput.value = "";
+      stopRecording(false);
+    };
+  }
 
-  try { recognition.abort(); } catch(e) {}
+  micBtn.addEventListener("click", () => {
+    if (isRecording) {
+      stopRecording(true);
+    } else {
+      startRecording();
+    }
+  });
 
-  setTimeout(() => {
-    voiceStatusBar.classList.remove('visible');
-    voiceStatusText.textContent = 'Listening…';
-    if (cancel) commandInput.value = '';
-  }, cancel ? 0 : 1200);
-}
+  cancelVoiceBtn.addEventListener("click", () => {
+    stopRecording(true, true);
+  });
 
+  function startRecording() {
+    if (!recognition) return;
+    voiceAborted = false;
+    isRecording = true;
+    commandInput.value = "";
+    commandInput.classList.add("voice-active");
+    micBtn.classList.add("recording");
+    micBtn.title = "Recording… click to stop";
+    micBtn.textContent = "⏹";
+    voiceStatusBar.classList.add("visible");
+    voiceStatusText.textContent = "Listening…";
 
-/* =====================================================================
+    try {
+      recognition.start();
+    } catch (e) {}
+  }
+
+  function stopRecording(userStopped = false, cancel = false) {
+    if (!isRecording && !cancel) return;
+
+    if (cancel) voiceAborted = true;
+
+    isRecording = false;
+    commandInput.classList.remove("voice-active");
+    micBtn.classList.remove("recording");
+    micBtn.title = "Start voice input";
+    micBtn.textContent = "🎤";
+
+    try {
+      recognition.abort();
+    } catch (e) {}
+
+    setTimeout(
+      () => {
+        voiceStatusBar.classList.remove("visible");
+        voiceStatusText.textContent = "Listening…";
+        if (cancel) commandInput.value = "";
+      },
+      cancel ? 0 : 1200,
+    );
+  }
+
+  /* =====================================================================
    COMMAND EXECUTION
    ===================================================================== */
-function executeCommand() {
-  const cmd         = commandInput.value.trim();
-  const feedbackDiv = document.getElementById('commandFeedback');
+  function executeCommand() {
+    const cmd = commandInput.value.trim();
+    const feedbackDiv = document.getElementById("commandFeedback");
 
-  if (!cmd) {
-    feedbackDiv.textContent  = '⚠ Please enter or speak a command';
-    feedbackDiv.className    = 'feedback-box feedback-error';
-    return;
+    if (!cmd) {
+      feedbackDiv.textContent = "⚠ Please enter or speak a command";
+      feedbackDiv.className = "feedback-box feedback-error";
+      return;
+    }
+
+    fetch("/api/set_command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          feedbackDiv.textContent = "✓ " + data.message;
+          feedbackDiv.className = "feedback-box feedback-success";
+          currentCommand = data.command;
+          const cs = document.getElementById("commandStatus");
+          cs.textContent = "▶ Active";
+          cs.className = "status-badge status-active";
+        } else {
+          feedbackDiv.textContent = "✗ " + data.message;
+          feedbackDiv.className = "feedback-box feedback-error";
+        }
+      })
+      .catch(() => {
+        feedbackDiv.textContent = "✗ Network error";
+        feedbackDiv.className = "feedback-box feedback-error";
+      });
   }
 
-  fetch('/api/set_command', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ command: cmd }),
-  })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        feedbackDiv.textContent = '✓ ' + data.message;
-        feedbackDiv.className   = 'feedback-box feedback-success';
-        currentCommand          = data.command;
-        const cs = document.getElementById('commandStatus');
-        cs.textContent = '▶ Active';
-        cs.className   = 'status-badge status-active';
-      } else {
-        feedbackDiv.textContent = '✗ ' + data.message;
-        feedbackDiv.className   = 'feedback-box feedback-error';
-      }
-    })
-    .catch(() => {
-      feedbackDiv.textContent = '✗ Network error';
-      feedbackDiv.className   = 'feedback-box feedback-error';
-    });
-}
+  document
+    .getElementById("executeBtn")
+    .addEventListener("click", executeCommand);
 
-document.getElementById('executeBtn').addEventListener('click', executeCommand);
-
-document.getElementById('commandInput').addEventListener('keypress', e => {
-  if (e.key === 'Enter') executeCommand();
-});
-
-document.getElementById('clearBtn').addEventListener('click', () => {
-  commandInput.value = '';
-  document.getElementById('commandFeedback').textContent = '';
-  currentCommand = null;
-  const cs = document.getElementById('commandStatus');
-  cs.textContent = 'No command';
-  cs.className   = 'status-badge';
-  fetch('/api/clear_command', { method: 'POST' });
-});
-
-document.querySelectorAll('.example-cmd').forEach(el => {
-  el.addEventListener('click', function() {
-    commandInput.value = this.dataset.cmd;
-    commandInput.focus();
+  document.getElementById("commandInput").addEventListener("keypress", (e) => {
+    if (e.key === "Enter") executeCommand();
   });
-});
 
+  document.getElementById("clearBtn").addEventListener("click", () => {
+    commandInput.value = "";
+    document.getElementById("commandFeedback").textContent = "";
+    currentCommand = null;
+    const cs = document.getElementById("commandStatus");
+    cs.textContent = "No command";
+    cs.className = "status-badge";
+    fetch("/api/clear_command", { method: "POST" });
+  });
 
-/* =====================================================================
+  document.querySelectorAll(".example-cmd").forEach((el) => {
+    el.addEventListener("click", function () {
+      commandInput.value = this.dataset.cmd;
+      commandInput.focus();
+    });
+  });
+
+  /* =====================================================================
    SNAPSHOT
    ===================================================================== */
-document.getElementById('autoSnapshotMode').checked = autoSnapshotEnabled;
-document.getElementById('autoSnapshotMode').addEventListener('change', function() {
-  autoSnapshotEnabled = this.checked;
-  document.getElementById('snapshotStatus').textContent =
-    autoSnapshotEnabled ? '✓ Auto-capture enabled' : '';
-});
+  document.getElementById("autoSnapshotMode").checked = autoSnapshotEnabled;
+  document
+    .getElementById("autoSnapshotMode")
+    .addEventListener("change", function () {
+      autoSnapshotEnabled = this.checked;
+      document.getElementById("snapshotStatus").textContent =
+        autoSnapshotEnabled ? "✓ Auto-capture enabled" : "";
+    });
 
-document.getElementById('manualSnapshotBtn').addEventListener('click', () => captureSnapshot());
+  document
+    .getElementById("manualSnapshotBtn")
+    .addEventListener("click", () => captureSnapshot());
 
-document.getElementById('closeSnapshot').addEventListener('click', () => {
-  document.getElementById('snapshotArea').style.display = 'none';
-});
+  document.getElementById("closeSnapshot").addEventListener("click", () => {
+    document.getElementById("snapshotArea").style.display = "none";
+  });
 
-function captureSnapshot() {
-  const now = Date.now();
-  if (now - lastSnapshotTime < 2000) return;
-  lastSnapshotTime = now;
+  function captureSnapshot() {
+    const now = Date.now();
+    if (now - lastSnapshotTime < 2000) return;
+    lastSnapshotTime = now;
 
-  fetch('/api/capture_snapshot', { method: 'POST' })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        // Show in small preview
-        showSnapshot(data.filename);
-        
-        // Open verification modal if auto-snapshot enabled
-        if (autoSnapshotEnabled && currentCommand) {
+    fetch("/api/capture_snapshot", { method: "POST" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          // Show small preview
+          showSnapshot(data.filename);
+
+          // Always open verification modal after snapshot
           openVerificationModal(data.filename);
+
+          const ss = document.getElementById("snapshotStatus");
+          ss.textContent = `✓ Saved: ${data.filename}`;
+          ss.className = "status-text status-success";
+          setTimeout(() => {
+            ss.textContent = "";
+          }, 3000);
         }
-        
-        const ss = document.getElementById('snapshotStatus');
-        ss.textContent = `✓ Saved: ${data.filename}`;
-        ss.className   = 'status-text status-success';
-        setTimeout(() => { ss.textContent = ''; }, 3000);
-      }
-    })
-    .catch(console.error);
-}
+      })
+      .catch(console.error);
+  }
 
-function showSnapshot(filename) {
-  document.getElementById('snapshotImage').src = `/api/get_snapshot/${filename}`;
-  document.getElementById('snapshotTime').textContent = new Date().toLocaleTimeString();
-  document.getElementById('snapshotArea').style.display = 'block';
-}
+  function showSnapshot(filename) {
+    document.getElementById("snapshotImage").src =
+      `/api/get_snapshot/${filename}`;
+    document.getElementById("snapshotTime").textContent =
+      new Date().toLocaleTimeString();
+    document.getElementById("snapshotArea").style.display = "block";
+  }
 
-
-/* =====================================================================
-   VERIFICATION MODAL
+  /* =====================================================================
+   VERIFICATION MODAL — 3-step script flow
+   Step 1: Is this the right person?
+   Step 2: Is the snapshot clear?
+   Step 3: Is the sketch good enough?
+   Each step has a system voice line. Retake at any step resets the lock.
    ===================================================================== */
-const verificationModal  = document.getElementById('verificationModal');
-const modalSnapshotImg   = document.getElementById('modalSnapshotImg');
-const modalPersonName    = document.getElementById('modalPersonName');
-const modalPositionText  = document.getElementById('modalPositionText');
-const modalTimestamp     = document.getElementById('modalTimestamp');
-const createSketchCheck  = document.getElementById('createSketchCheck');
-const btnSaveSnapshot    = document.getElementById('btnSaveSnapshot');
-const btnDiscardSnapshot = document.getElementById('btnDiscardSnapshot');
-const sketchPreviewSection = document.getElementById('sketchPreviewSection');
-const sketchPreviewImg   = document.getElementById('sketchPreviewImg');
-const sketchStatus       = document.getElementById('sketchStatus');
+  const verificationModal  = document.getElementById("verificationModal");
+  const modalSnapshotImg   = document.getElementById("modalSnapshotImg");
+  const modalPersonName    = document.getElementById("modalPersonName");
+  const modalPositionText  = document.getElementById("modalPositionText");
+  const modalTimestamp     = document.getElementById("modalTimestamp");
+  const voiceLineBar       = document.getElementById("voiceLineBar");
+  const voiceLineText      = document.getElementById("voiceLineText");
 
-document.getElementById('closeModal').addEventListener('click', closeVerificationModal);
+  document.getElementById("closeModal").addEventListener("click", closeVerificationModal);
 
-function openVerificationModal(filename) {
-  if (!currentCommand) return;
-
-  pendingSnapshot = { filename: filename };
-
-  // Fill modal data
-  modalSnapshotImg.src = `/api/get_snapshot/${filename}`;
-  modalPersonName.textContent = currentCommand.reference_person || 'Unknown';
-  
-  // Build position text
-  let posText = '';
-  if (currentCommand.mode === 'single') {
-    posText = `Single detection of ${currentCommand.reference_person}`;
-  } else {
-    posText = `Person to the ${currentCommand.direction} of ${currentCommand.reference_person}`;
-  }
-  modalPositionText.textContent = posText;
-  
-  modalTimestamp.textContent = new Date().toLocaleString();
-  createSketchCheck.checked = false;
-  sketchPreviewSection.style.display = 'none';
-
-  verificationModal.classList.add('visible');
-}
-
-function closeVerificationModal() {
-  verificationModal.classList.remove('visible');
-  pendingSnapshot = null;
-}
-
-btnSaveSnapshot.addEventListener('click', async () => {
-  if (!pendingSnapshot) return;
-
-  const createSketch = createSketchCheck.checked;
-
-  const payload = {
-    temp_filename: pendingSnapshot.filename,
-    person_name: modalPersonName.textContent,
-    position_desc: modalPositionText.textContent,
-    create_sketch: createSketch
-  };
-
-  try {
-    // Show processing if sketch requested
-    if (createSketch) {
-      sketchPreviewSection.style.display = 'block';
-      sketchStatus.textContent = '⏳ Generating sketch...';
-      sketchStatus.className = 'sketch-status processing';
-    }
-
-    const response = await fetch('/api/verify_snapshot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+  // ── Helpers ──────────────────────────────────────────────────────────
+  function setStep(n) {
+    [1,2,3].forEach(i => {
+      document.getElementById(`stepPanel${i}`).classList.toggle("active", i === n);
+      const si = document.getElementById(`stepItem${i}`);
+      si.classList.remove("active","done");
+      if (i < n)  si.classList.add("done");
+      if (i === n) si.classList.add("active");
     });
+    const titles = { 1:"📸 Verify Detection", 2:"🔍 Snapshot Quality", 3:"✏️ Sketch Review" };
+    document.getElementById("modalTitle").textContent = titles[n];
+  }
 
-    const data = await response.json();
+  // systemSay returns a Promise — await it before closing modal
+  // so the /api/speak request reaches the server before the page moves on.
+  function systemSay(text) {
+    voiceLineBar.classList.add("visible");
+    voiceLineText.textContent = text;
+    return fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    }).catch(() => {});
+  }
 
-    if (data.success) {
-      alert(`✓ ${data.message}`);
-      
-      // Show sketch if generated
-      if (data.sketch_filename) {
-        sketchPreviewImg.src = `/api/get_snapshot/${data.sketch_filename}`;
-        sketchStatus.textContent = '✓ Sketch generated successfully!';
-        sketchStatus.className = 'sketch-status success';
-      }
+  async function resetSnapshotLock() {
+    await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
+  }
 
-      setTimeout(() => {
-        closeVerificationModal();
-      }, createSketch ? 3000 : 500);
+  function openVerificationModal(filename, overrideName, overridePos) {
+    pendingSnapshot = { filename };
+
+    modalSnapshotImg.src = `/api/get_snapshot/${filename}`;
+    document.getElementById("modalSnapshotImg2").src = `/api/get_snapshot/${filename}`;
+
+    const name = overrideName ||
+      (currentCommand ? currentCommand.reference_person : "") || "";
+    modalPersonName.value = name;
+
+    if (overridePos) {
+      modalPositionText.textContent = overridePos;
+    } else if (currentCommand) {
+      modalPositionText.textContent = currentCommand.mode === "single"
+        ? `Single detection of ${currentCommand.reference_person}`
+        : `Person to the ${currentCommand.direction} of ${currentCommand.reference_person}`;
     } else {
-      alert(`✗ ${data.message}`);
+      modalPositionText.textContent = "Manual snapshot";
     }
-  } catch (error) {
-    alert('✗ Error saving snapshot');
-    console.error(error);
+
+    modalTimestamp.textContent = new Date().toLocaleString();
+
+    // Reset sketch panel
+    document.getElementById("sketchSpinner").style.display   = "block";
+    document.getElementById("sketchPreviewImg").style.display = "none";
+    document.getElementById("sketchStatusMsg").style.display  = "none";
+    document.getElementById("sketchActions").style.display    = "none";
+
+    setStep(1);
+    verificationModal.classList.add("visible");
+
+    // System speaks step-1 line (already spoken by backend on detection,
+    // but also show it in the voice bar so the operator sees it)
+    const ref  = currentCommand ? currentCommand.reference_person : "";
+    const mode = currentCommand ? currentCommand.mode : "";
+    if (mode === "single") {
+      systemSay(`I have detected ${name}. Could you confirm — is this the correct person?`);
+    } else {
+      systemSay(`I found someone at the detected position near ${ref}. Is this the right person?`);
+    }
+    setTimeout(() => modalPersonName.focus(), 100);
   }
-});
 
-btnDiscardSnapshot.addEventListener('click', async () => {
-  if (!pendingSnapshot) return;
-  if (!confirm('Discard this snapshot?')) return;
+  function closeVerificationModal() {
+    verificationModal.classList.remove("visible");
+    pendingSnapshot = null;
+  }
 
-  try {
-    await fetch('/api/discard_snapshot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  // ── Step 1: Person correct? ───────────────────────────────────────────
+  document.getElementById("btnPersonYes").addEventListener("click", () => {
+    if (!pendingSnapshot) return;
+    document.getElementById("step2PersonName").textContent =
+      modalPersonName.value.trim() || "Unknown";
+    setStep(2);
+    systemSay("Great. Please check the snapshot — is the image clear and well framed?");
+  });
+
+  document.getElementById("btnPersonNo").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await systemSay("Understood. I will discard this and watch for the next detection.");
+    await fetch("/api/discard_snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filename: pendingSnapshot.filename })
-    });
+    }).catch(() => {});
+    await resetSnapshotLock();
     closeVerificationModal();
-  } catch (error) {
-    console.error('Discard error:', error);
-  }
-});
+    Utils.notify("Wrong person — ready for next detection", "info");
+  });
 
+  // ── Step 2: Snapshot quality ──────────────────────────────────────────
+  document.getElementById("btnSnapshotGood").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await systemSay("Good. Generating the sketch now — please wait a moment.");
+    setStep(3);
 
-/* =====================================================================
+    const personName  = modalPersonName.value.trim() || "Unknown";
+    const positionDesc = modalPositionText.textContent;
+
+    // Save verified snapshot then generate sketch
+    try {
+      const res  = await fetch("/api/verify_snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          temp_filename: pendingSnapshot.filename,
+          person_name:   personName,
+          position_desc: positionDesc,
+          create_sketch: true,
+          company:       "AABBCC"
+        })
+      });
+      const data = await res.json();
+
+      document.getElementById("sketchSpinner").style.display = "none";
+
+      if (data.success && data.sketch_filename) {
+        const img = document.getElementById("sketchPreviewImg");
+        img.src = `/api/get_snapshot/${data.sketch_filename}`;
+        img.style.display = "block";
+        pendingSnapshot.verified_filename = data.verified_filename;
+        pendingSnapshot.sketch_filename   = data.sketch_filename;
+
+        const msg = document.getElementById("sketchStatusMsg");
+        msg.textContent  = "✓ Sketch generated";
+        msg.className    = "sketch-status-msg success";
+        msg.style.display = "block";
+
+        document.getElementById("sketchActions").style.display = "flex";
+        systemSay("Here is the sketch. Does it look good enough to send to the laser machine?");
+      } else {
+        const msg = document.getElementById("sketchStatusMsg");
+        msg.textContent  = "✗ Sketch generation failed — " + (data.message || "");
+        msg.className    = "sketch-status-msg error";
+        msg.style.display = "block";
+        document.getElementById("sketchActions").style.display = "flex";
+        systemSay("I was not able to generate the sketch. Would you like to retake the snapshot?");
+      }
+    } catch (err) {
+      document.getElementById("sketchSpinner").style.display = "none";
+      const msg = document.getElementById("sketchStatusMsg");
+      msg.textContent = "✗ Network error generating sketch";
+      msg.className = "sketch-status-msg error";
+      msg.style.display = "block";
+      document.getElementById("sketchActions").style.display = "flex";
+    }
+  });
+
+  document.getElementById("btnSnapshotRetake").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await systemSay("No problem. I will discard this snapshot and take a fresh one.");
+    await fetch("/api/discard_snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: pendingSnapshot.filename })
+    }).catch(() => {});
+    await resetSnapshotLock();
+    closeVerificationModal();
+    Utils.notify("Snapshot discarded — ready to retake", "info");
+  });
+
+  // ── Step 3: Sketch quality ────────────────────────────────────────────
+  document.getElementById("btnSketchGood").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    const name = modalPersonName.value.trim() || "Unknown";
+    await systemSay(`Excellent. Sketch for ${name} has been finalised and saved. Sending to the production line.`);
+    closeVerificationModal();
+    Utils.notify(`✓ Sketch for ${name} finalised`, "success");
+  });
+
+  document.getElementById("btnSketchRetake").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await systemSay("Understood. I will retake the snapshot for a better sketch.");
+    // Delete both temp and verified files if they exist
+    const filesToDelete = [pendingSnapshot.filename];
+    if (pendingSnapshot.verified_filename) filesToDelete.push(pendingSnapshot.verified_filename);
+    for (const fn of filesToDelete) {
+      await fetch("/api/discard_snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: fn })
+      }).catch(() => {});
+    }
+    await resetSnapshotLock();
+    closeVerificationModal();
+    Utils.notify("Sketch not accepted — ready to retake snapshot", "info");
+  });
+
+  /* =====================================================================
    SYSTEM STATUS
    ===================================================================== */
-function checkDatasetStatus() {
-  fetch('/api/system_status')
-    .then(r => r.json())
-    .then(data => {
-      document.getElementById('totalPersons').textContent    = data.dataset_persons;
-      document.getElementById('totalEmbeddings').textContent = data.embeddings_count;
+  function checkDatasetStatus() {
+    fetch("/api/system_status")
+      .then((r) => r.json())
+      .then((data) => {
+        document.getElementById("totalPersons").textContent =
+          data.dataset_persons;
+        document.getElementById("totalEmbeddings").textContent =
+          data.embeddings_count;
 
-      const warn = document.getElementById('noDatasetWarning');
-      const ds   = document.getElementById('datasetStatus');
+        const warn = document.getElementById("noDatasetWarning");
+        const ds = document.getElementById("datasetStatus");
 
-      if (!data.dataset_persons) {
-        warn.style.display = 'flex';
-        ds.textContent = '⚠ No dataset';
-        ds.className   = 'status-badge status-warning';
-      } else if (!data.embeddings_loaded) {
-        warn.style.display = 'flex';
-        ds.textContent = '⚠ No embeddings';
-        ds.className   = 'status-badge status-warning';
-      } else {
-        warn.style.display = 'none';
-        ds.textContent = `✓ ${data.dataset_persons} persons`;
-        ds.className   = 'status-badge status-success';
-      }
-    })
-    .catch(console.error);
-}
+        if (!data.dataset_persons) {
+          warn.style.display = "flex";
+          ds.textContent = "⚠ No dataset";
+          ds.className = "status-badge status-warning";
+        } else if (!data.embeddings_loaded) {
+          warn.style.display = "flex";
+          ds.textContent = "⚠ No embeddings";
+          ds.className = "status-badge status-warning";
+        } else {
+          warn.style.display = "none";
+          ds.textContent = `✓ ${data.dataset_persons} persons`;
+          ds.className = "status-badge status-success";
+        }
+      })
+      .catch(console.error);
+  }
 
-checkDatasetStatus();
-setInterval(checkDatasetStatus, 10000);
+  checkDatasetStatus();
+  setInterval(checkDatasetStatus, 10000);
 
-
-/* =====================================================================
+  /* =====================================================================
    DETECTION STATUS POLL
    ===================================================================== */
-setInterval(() => {
-  fetch('/api/detection_status')
-    .then(r => r.json())
-    .then(data => {
-      const info = data.detection_info || {};
-      document.getElementById('faceCount').textContent =
-        info.total_faces ?? 0;
-      document.getElementById('anchorPerson').textContent =
-        info.anchor_detected ? (currentCommand?.reference_person ?? '-') : '-';
-      document.getElementById('targetFound').textContent =
-        info.target_detected ? '✓ Yes' : '✗ No';
+  setInterval(() => {
+    fetch("/api/detection_status")
+      .then((r) => r.json())
+      .then((data) => {
+        const info = data.detection_info || {};
+        document.getElementById("faceCount").textContent =
+          info.total_faces ?? 0;
+        document.getElementById("anchorPerson").textContent =
+          info.anchor_detected
+            ? (currentCommand?.reference_person ?? "-")
+            : "-";
+        document.getElementById("targetFound").textContent =
+          info.target_detected ? "✓ Yes" : "✗ No";
 
-      updateDetectedFacesList(info.faces);
+        updateDetectedFacesList(info.faces);
+      })
+      .catch(console.error);
+  }, 1000);
 
-      // Auto-snapshot when target detected (will open verification modal)
-      if (autoSnapshotEnabled && currentCommand &&
-          info.target_detected && Date.now() - lastSnapshotTime > 5000) {
-        captureSnapshot();
-      }
-    })
-    .catch(console.error);
-}, 1000);
-
-function updateDetectedFacesList(faces) {
-  const el = document.getElementById('detectedFaces');
-  if (!faces || !faces.length) {
-    el.innerHTML = '<p class="no-faces">No faces detected</p>';
-    return;
-  }
-  el.innerHTML = faces.map(f =>
-    `<div class="face-item">
+  function updateDetectedFacesList(faces) {
+    const el = document.getElementById("detectedFaces");
+    if (!faces || !faces.length) {
+      el.innerHTML = '<p class="no-faces">No faces detected</p>';
+      return;
+    }
+    el.innerHTML = faces
+      .map(
+        (f) =>
+          `<div class="face-item">
        <span class="face-name">${f.name}</span>
        <span class="face-score">${(f.score * 100).toFixed(1)}%</span>
-     </div>`
-  ).join('');
-}
+     </div>`,
+      )
+      .join("");
+  }
+
+  /* =====================================================================
+   AUTO-CROP POLL — picks up server-side crops for verification
+   ===================================================================== */
+  let lastAutoCropFilename = null;
+
+  setInterval(() => {
+    // Only poll when modal is not already open
+    if (verificationModal.classList.contains("visible")) return;
+
+    fetch("/api/pending_snapshot")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.snapshot) {
+          const snap = data.snapshot;
+          // Avoid showing same file twice if timing is odd
+          if (snap.filename === lastAutoCropFilename) return;
+          lastAutoCropFilename = snap.filename;
+
+          // Show small preview
+          showSnapshot(snap.filename);
+
+          // Open verification modal with server-provided info
+          openVerificationModal(
+            snap.filename,
+            snap.person_name,
+            snap.position_desc,
+          );
+        }
+      })
+      .catch(() => {});
+  }, 2000); // Poll every 2 s
 </script>
 {% endblock %}

@@ -535,22 +535,9 @@ class SystemState:
         self.snapshot_locked      = True
         self.last_snapshot_person = name
         self._save_crop(frame, target_face["bbox"], name, command_result)
-
-        # System speaks — matches script step where system announces the detection
-        mode = (command_result or {}).get("mode", "")
-        ref  = (command_result or {}).get("reference_person", "")
-        pos  = (command_result or {}).get("position", 1)
-        if mode == "single":
-            self.speak(
-                f"I have detected {name}. "
-                "Could you please confirm — is this the correct person?"
-            )
-        else:
-            ordinal = {1:"first", 2:"second", 3:"third"}.get(pos, f"number {pos}")
-            self.speak(
-                f"I have found someone at the {ordinal} position "
-                f"relative to {ref}. Is this the right person?"
-            )
+        # NOTE: Do NOT call self.speak() here — the frontend speaks the
+        # confirmation question exactly once when it opens the modal.
+        # Calling speak() here caused the question to be said twice.
 
     def _save_crop(self, frame, bbox, person_name, command_result=None):
         try:
@@ -1272,6 +1259,48 @@ def speak_route():
         return jsonify({'success': False, 'message': 'No text provided'})
     state.speak(text)
     return jsonify({'success': True})
+
+
+@app.route('/api/voice_command', methods=['POST'])
+def voice_command():
+    """
+    NLP voice command parser — accepts raw spoken text, extracts the command,
+    and returns structured result + a guest_hint (name mentioned by operator).
+
+    Body: { "text": "detect the person right to User1" }
+    Returns: { success, command, message, guest_hint }
+    """
+    text = (request.json or {}).get('text', '').strip()
+    if not text:
+        return jsonify({'success': False, 'message': 'No text provided'})
+
+    # Try parsing the full text as a command first
+    result = state.command_parser.parse(text)
+
+    # Extract a guest name hint — any capitalised word not in command keywords
+    import re as _re
+    _stop = {'detect','find','show','capture','identify','scan','person','people',
+             'the','a','an','of','to','on','at','is','are','who','left','right',
+             'first','second','third','fourth','standing','sitting','next','side'}
+    words  = _re.findall(r"[A-Z][a-z]+|[A-Z]{2,}", text)
+    hints  = [w for w in words if w.lower() not in _stop]
+    guest_hint = hints[0] if hints else None
+
+    if result['valid']:
+        state.current_command = result
+        return jsonify({
+            'success':    True,
+            'message':    state.command_parser.format_feedback(result),
+            'command':    result,
+            'guest_hint': guest_hint
+        })
+
+    return jsonify({
+        'success':    False,
+        'message':    result.get('error', 'Could not parse command'),
+        'command':    result,
+        'guest_hint': guest_hint
+    })
 
 
 # ============================================================================

@@ -13,3 +13,4 @@ sketch_generator*.py
 /templates/index*.html
 /templates/base*.html
 /static/js/main*.js
+/app*.py
