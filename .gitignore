@@ -6,7 +6,7 @@
 /templates1
 /__pycache__
 /sketch_try*.py
-/app*.py
+/tempfiles
 sketch_generator2.py
 command_parsing_enhanced*.py
 sketch_generator*.py
