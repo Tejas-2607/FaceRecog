@@ -1,4 +1,3 @@
-
 from flask import Flask, render_template, Response, request, jsonify, send_file
 import base64
 import shutil
@@ -163,6 +162,7 @@ class SystemState:
         self.snapshot_locked       = False
         self.last_snapshot_person  = None
         self._tts_lock             = threading.Lock()
+        self.is_speaking           = False   # True while TTS is playing + 500ms tail
         # Pending auto-crop waiting for frontend verification
         self.pending_auto_snapshot = None
 
@@ -227,12 +227,22 @@ class SystemState:
         An engine initialised on the main thread silently does nothing when
         runAndWait() is called from a different thread. Creating it on the same
         thread that calls runAndWait() fixes the silence.
+
+        Echo / feedback-loop prevention:
+          is_speaking is set True before runAndWait() and kept True for
+          MIC_MUTE_TAIL_MS after engine.stop(). The frontend polls
+          /api/speaking_state and holds both mic paths closed during this
+          entire window so the AI voice never feeds back into the mic.
         """
+        MIC_MUTE_TAIL_MS = 500   # ms to keep mic muted after TTS ends
+                                 # 500ms covers BT buffer tail; reduce to 250ms
+                                 # for wired headsets if responses feel sluggish
         print(f"[SYSTEM] {text}")
         if not _TTS_AVAILABLE:
             return
         def _run():
             with self._tts_lock:
+                self.is_speaking = True
                 try:
                     engine = _pyttsx3.init()
                     engine.setProperty("rate", 160)
@@ -242,6 +252,9 @@ class SystemState:
                     engine.stop()
                 except Exception as e:
                     print(f"TTS error: {e}")
+                finally:
+                    time.sleep(MIC_MUTE_TAIL_MS / 1000.0)
+                    self.is_speaking = False
         threading.Thread(target=_run, daemon=True).start()
 
     # ── Camera ────────────────────────────────────────────────────────────────
@@ -1261,6 +1274,16 @@ def speak_route():
     return jsonify({'success': True})
 
 
+@app.route('/api/speaking_state')
+def speaking_state():
+    """
+    Returns whether TTS is currently active (including the post-speech tail).
+    Frontend polls this before opening either mic path.
+    Response: { "speaking": true/false }
+    """
+    return jsonify({'speaking': state.is_speaking})
+
+
 @app.route('/api/voice_command', methods=['POST'])
 def voice_command():
     """
@@ -1331,5 +1354,3 @@ if __name__ == '__main__':
     except ImportError:
         print("Server: Flask dev (pip install waitress for production)")
         app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
-
-        
