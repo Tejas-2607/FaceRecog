@@ -1252,12 +1252,29 @@ def reset_snapshot():
     """
     Unlock the snapshot system for a fresh shot.
     Called when operator clicks Retake at any step — wrong person,
-    blurry snapshot, or bad sketch.
+    blurry snapshot, or bad sketch — AND after a successful finalise so that
+    running the same command again in the same session still fires correctly
+    (fix 5: same person must be re-detected after any reset).
     """
+    state.snapshot_locked       = False
+    state.last_snapshot_person  = None   # always clear so same person triggers again
+    state.pending_auto_snapshot = None
+    return jsonify({'success': True, 'message': 'Ready for next detection'})
+
+
+@app.route('/api/clear_command_after_finalise', methods=['POST'])
+def clear_command_after_finalise():
+    """
+    Called after sketch is accepted and sent to laser.
+    Clears the current command so the same detection does not auto-fire again
+    until operator sets a new command (fix 4).
+    Also resets snapshot state so a new run with same person works (fix 5).
+    """
+    state.current_command       = None
     state.snapshot_locked       = False
     state.last_snapshot_person  = None
     state.pending_auto_snapshot = None
-    return jsonify({'success': True, 'message': 'Ready for next detection'})
+    return jsonify({'success': True, 'message': 'Command cleared after finalise'})
 
 
 @app.route('/api/speak', methods=['POST'])
