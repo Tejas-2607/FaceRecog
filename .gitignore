@@ -1,8 +1,10 @@
 /venv
-/face_embeddings*.pkl
 /dataset
 /embeddings
 /snapshots
 /templates1
 /__pycache__
 /tempfiles
+/embeddings_buffalo_l
+/embeddings_buffalo_s
+/embeddings_buffalo_sc

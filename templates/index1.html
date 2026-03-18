@@ -1,0 +1,2869 @@
+{% extends "base.html" %} {% block title %}Live Recognition - Face Recognition
+System{% endblock %} {% block extra_css %}
+<style>
+  /* ══════════════════════════════════════════════════════════════════════
+   MODE TOGGLE BAR — sits above the camera
+   ══════════════════════════════════════════════════════════════════════ */
+  .mode-toggle-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.85rem;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid #334155;
+    border-radius: 0.75rem;
+    padding: 0.45rem 0.6rem;
+  }
+  .mode-toggle-label {
+    font-size: 0.75rem;
+    color: #64748b;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+    margin-right: 0.3rem;
+  }
+  .mode-btn {
+    flex: 1;
+    padding: 0.5rem 0.8rem;
+    border: 1.5px solid transparent;
+    border-radius: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.22s;
+    background: transparent;
+    color: #64748b;
+  }
+  .mode-btn.active-manual {
+    background: rgba(79, 70, 229, 0.18);
+    border-color: #4f46e5;
+    color: #a5b4fc;
+  }
+  .mode-btn.active-voice {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: #10b981;
+    color: #34d399;
+  }
+  .mode-btn:not(.active-manual):not(.active-voice):hover {
+    background: rgba(51, 65, 85, 0.4);
+    color: #cbd5e1;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+   COMMAND / VOICE INPUT
+   ══════════════════════════════════════════════════════════════════════ */
+  .command-input-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+    margin-bottom: 0.75rem;
+  }
+  .input-command {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1.5px solid #334155;
+    border-radius: 0.6rem;
+    color: var(--white);
+    font-size: 0.95rem;
+    transition:
+      border-color 0.25s,
+      box-shadow 0.25s;
+  }
+  .input-command:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18);
+  }
+  .input-command.voice-active {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);
+    animation: borderPulse 1s infinite;
+  }
+  @keyframes borderPulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.1);
+    }
+  }
+
+  .btn-mic {
+    width: 42px;
+    height: 42px;
+    flex-shrink: 0;
+    border-radius: 0.6rem;
+    border: 1.5px solid rgba(16, 185, 129, 0.45);
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    font-size: 1.15rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.22s;
+  }
+  .btn-mic:hover {
+    background: rgba(16, 185, 129, 0.25);
+    transform: scale(1.07);
+  }
+  .btn-mic.recording {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #ef4444;
+    animation: micPulse 1s infinite;
+  }
+  @keyframes micPulse {
+    0%,
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+      transform: scale(1.08);
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+    }
+  }
+
+  .voice-status-bar {
+    display: none;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.9rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+    color: #f87171;
+  }
+  .voice-status-bar.visible {
+    display: flex;
+  }
+  .voice-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    animation: blink 1s infinite;
+    flex-shrink: 0;
+  }
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+  .voice-status-text {
+    flex: 1;
+  }
+  .btn-cancel-voice {
+    padding: 0.25rem 0.65rem;
+    border-radius: 0.375rem;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn-cancel-voice:hover {
+    background: rgba(239, 68, 68, 0.35);
+    color: #fff;
+  }
+
+  .command-buttons {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .btn-primary-full,
+  .btn-secondary-full {
+    flex: 1;
+    padding: 0.7rem;
+    border: none;
+    border-radius: 0.55rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.22s;
+    font-size: 0.9rem;
+    letter-spacing: 0.01em;
+  }
+  .btn-primary-full {
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    color: #fff;
+  }
+  .btn-primary-full:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.45);
+  }
+  .btn-secondary-full {
+    background: rgba(100, 116, 139, 0.22);
+    color: #cbd5e1;
+    border: 1px solid rgba(100, 116, 139, 0.4);
+  }
+  .btn-secondary-full:hover {
+    background: rgba(100, 116, 139, 0.4);
+    color: #fff;
+  }
+
+  .no-speech-note {
+    font-size: 0.78rem;
+    color: #64748b;
+    text-align: center;
+    margin-top: 0.4rem;
+    display: none;
+  }
+  .command-examples-mini {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid rgba(51, 65, 85, 0.5);
+  }
+  .example-label {
+    font-size: 0.8rem;
+    color: #64748b;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .examples-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .example-cmd {
+    display: block;
+    padding: 0.45rem 0.7rem;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid #334155;
+    border-radius: 0.4rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.22s;
+    color: #818cf8;
+    font-family: "Courier New", monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .example-cmd:hover {
+    background: rgba(79, 70, 229, 0.18);
+    border-color: #6366f1;
+    transform: translateX(4px);
+    color: #a5b4fc;
+  }
+
+  .feedback-box {
+    padding: 0.65rem 0.9rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+    min-height: 2.2rem;
+  }
+  .feedback-success {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+  .feedback-error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+   VERIFICATION MODAL (manual mode — unchanged look)
+   ══════════════════════════════════════════════════════════════════════ */
+  .verification-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    animation: fadeIn 0.3s;
+  }
+  .verification-modal.visible {
+    display: flex;
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  .modal-content {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    border: 2px solid #475569;
+    border-radius: 1.2rem;
+    max-width: 900px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 2rem;
+    animation: slideUp 0.3s;
+    position: relative;
+  }
+  @keyframes slideUp {
+    from {
+      transform: translateY(50px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid rgba(71, 85, 105, 0.5);
+  }
+  .modal-title {
+    font-size: 1.75rem;
+    color: #fff;
+    font-weight: 700;
+  }
+  .btn-close-modal {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+    padding: 0.5rem 1rem;
+    border-radius: 0.6rem;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-weight: 700;
+  }
+  .btn-close-modal:hover {
+    background: #ef4444;
+    color: #fff;
+  }
+  .modal-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+  .snapshot-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .snapshot-preview h3 {
+    font-size: 1.2rem;
+    color: #cbd5e1;
+    margin-bottom: 0.5rem;
+  }
+  .snapshot-preview img {
+    width: 100%;
+    border-radius: 0.75rem;
+    border: 2px solid #475569;
+    background: #0f172a;
+  }
+  .verification-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  .info-field {
+    background: rgba(15, 23, 42, 0.6);
+    padding: 1rem;
+    border-radius: 0.6rem;
+    border: 1px solid #334155;
+  }
+  .info-label {
+    font-size: 0.85rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+  }
+  .info-value {
+    font-size: 1.1rem;
+    color: #fff;
+    font-weight: 600;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .btn-modal-action {
+    flex: 1;
+    min-width: 200px;
+    padding: 1rem 1.5rem;
+    border: none;
+    border-radius: 0.7rem;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.25s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+  }
+  .btn-save {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+  }
+  .btn-save:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(16, 185, 129, 0.5);
+  }
+  .btn-discard {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+  }
+  .btn-discard:hover {
+    background: #ef4444;
+    color: #fff;
+  }
+
+  /* Step indicator */
+  .step-bar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 1.5rem;
+  }
+  .step-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    flex: 1;
+    position: relative;
+  }
+  .step-item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 16px;
+    left: 60%;
+    width: 80%;
+    height: 2px;
+    background: #334155;
+    z-index: 0;
+  }
+  .step-item.done::after {
+    background: #10b981;
+  }
+  .step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #1e293b;
+    border: 2px solid #334155;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: #64748b;
+    position: relative;
+    z-index: 1;
+    transition: all 0.3s;
+  }
+  .step-item.active .step-num {
+    background: #4f46e5;
+    border-color: #4f46e5;
+    color: #fff;
+    box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.25);
+  }
+  .step-item.done .step-num {
+    background: #10b981;
+    border-color: #10b981;
+    color: #fff;
+  }
+  .step-label {
+    font-size: 0.72rem;
+    color: #64748b;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .step-item.active .step-label {
+    color: #a5b4fc;
+  }
+  .step-item.done .step-label {
+    color: #34d399;
+  }
+
+  /* Voice bar inside modal */
+  .voice-line-bar {
+    display: none;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.85rem 1.1rem;
+    background: rgba(79, 70, 229, 0.1);
+    border: 1px solid rgba(79, 70, 229, 0.35);
+    border-radius: 0.6rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.92rem;
+    color: #a5b4fc;
+    line-height: 1.5;
+  }
+  .voice-line-bar.visible {
+    display: flex;
+  }
+  .voice-line-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+  }
+  .step-panel {
+    display: none;
+  }
+  .step-panel.active {
+    display: block;
+  }
+
+  .sketch-preview-box {
+    margin-top: 1.25rem;
+    padding: 1rem;
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 0.6rem;
+    text-align: center;
+    border: 1px solid #334155;
+  }
+  .sketch-preview-box img {
+    width: 100%;
+    max-height: 380px;
+    object-fit: contain;
+    border-radius: 0.5rem;
+    border: 2px solid #475569;
+    background: #fff;
+  }
+  .sketch-status-msg {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.4rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .sketch-status-msg.processing {
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+  }
+  .sketch-status-msg.success {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+  }
+  .sketch-status-msg.error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+  }
+  @media (max-width: 900px) {
+    .modal-body {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+   VOICE SYSTEM POPUP
+   ══════════════════════════════════════════════════════════════════════ */
+  #voicePopup {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 8500;
+    background: rgba(4, 8, 20, 0.96);
+    flex-direction: row;
+    animation: fadeIn 0.25s;
+  }
+  #voicePopup.open {
+    display: flex;
+  }
+
+  /* LEFT 30% — Chat / conversation */
+  #vpChat {
+    width: 30%;
+    min-width: 260px;
+    background: #070d1a;
+    border-right: 1px solid rgba(99, 102, 241, 0.2);
+    display: flex;
+    flex-direction: column;
+  }
+  #vpChatHead {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+    background: rgba(79, 70, 229, 0.07);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-shrink: 0;
+  }
+  #vpChatHead .vp-title {
+    flex: 1;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #a5b4fc;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+  #vpStatusPill {
+    font-size: 0.65rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-weight: 700;
+    border: 1px solid transparent;
+    transition: all 0.3s;
+  }
+  #vpStatusPill.idle {
+    background: rgba(71, 85, 105, 0.35);
+    color: #64748b;
+    border-color: rgba(71, 85, 105, 0.4);
+  }
+  #vpStatusPill.active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border-color: rgba(16, 185, 129, 0.35);
+    animation: vpPill 1.4s infinite;
+  }
+  #vpStatusPill.speaking {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fbbf24;
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+  #vpStatusPill.listening {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.4);
+    animation: vpPill 0.9s infinite;
+  }
+  @keyframes vpPill {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+
+  #vpMessages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.75rem 0.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    scroll-behavior: smooth;
+  }
+  #vpMessages::-webkit-scrollbar {
+    width: 3px;
+  }
+  #vpMessages::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.3);
+    border-radius: 2px;
+  }
+
+  .vpmsg {
+    max-width: 96%;
+    padding: 0.45rem 0.65rem;
+    border-radius: 0.6rem;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    word-break: break-word;
+    animation: msgIn 0.2s ease;
+  }
+  @keyframes msgIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .vpmsg-who {
+    display: block;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.12rem;
+  }
+  .vpmsg-sys {
+    background: rgba(79, 70, 229, 0.16);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    color: #c7d2fe;
+    align-self: flex-start;
+    border-bottom-left-radius: 0.1rem;
+  }
+  .vpmsg-sys .vpmsg-who {
+    color: #818cf8;
+  }
+  .vpmsg-user {
+    background: rgba(30, 41, 59, 0.9);
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    color: #e2e8f0;
+    align-self: flex-end;
+    text-align: right;
+    border-bottom-right-radius: 0.1rem;
+  }
+  .vpmsg-user .vpmsg-who {
+    color: #475569;
+  }
+  .vpmsg-prompt {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.28);
+    color: #34d399;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-align: center;
+    align-self: stretch;
+    animation: promptPulse 1.5s infinite;
+  }
+  @keyframes promptPulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+
+  #vpTranscriptBar {
+    flex-shrink: 0;
+    padding: 0.55rem 0.75rem;
+    border-top: 1px solid rgba(99, 102, 241, 0.12);
+    background: rgba(7, 13, 26, 0.9);
+    font-size: 0.73rem;
+    color: #64748b;
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  #vpTranscriptBar .vp-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4f46e5;
+    flex-shrink: 0;
+    animation: vpPill 0.8s infinite;
+    visibility: hidden;
+  }
+  #vpLiveText {
+    flex: 1;
+    font-style: italic;
+    color: #94a3b8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* RIGHT 70% — Camera + verification steps */
+  #vpRight {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  #vpTopBar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.7rem 1rem;
+    background: rgba(15, 23, 42, 0.8);
+    border-bottom: 1px solid #1e293b;
+    flex-shrink: 0;
+  }
+  #vpTopBar h3 {
+    font-size: 0.95rem;
+    color: #a5b4fc;
+    font-weight: 700;
+    margin: 0;
+  }
+  #vpExitBtn {
+    padding: 0.35rem 0.9rem;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 0.45rem;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+  #vpExitBtn:hover {
+    background: rgba(239, 68, 68, 0.3);
+  }
+
+  #vpContent {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #vpCameraWrap {
+    flex-shrink: 0;
+    padding: 0.75rem 1rem 0.5rem;
+  }
+  #vpCameraWrap img {
+    width: 100%;
+    border-radius: 0.7rem;
+    border: 2px solid #1e293b;
+    display: block;
+  }
+
+  /* Waiting state before detection */
+  #vpWaiting {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    gap: 0.7rem;
+    color: #475569;
+    text-align: center;
+  }
+  #vpWaiting .vw-icon {
+    font-size: 2.8rem;
+  }
+  #vpWaiting .vw-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #a5b4fc;
+  }
+  #vpWaiting .vw-sub {
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+
+  /* Inline verification steps (inside voice popup) */
+  #vpSteps {
+    display: none;
+    padding: 0.75rem 1rem 1rem;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  #vpSteps.visible {
+    display: flex;
+  }
+
+  /* Step card inside popup — compact version */
+  .vp-step-card {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid #334155;
+    border-radius: 0.75rem;
+    padding: 1rem 1.1rem;
+  }
+  .vp-step-card h4 {
+    font-size: 0.85rem;
+    color: #a5b4fc;
+    margin: 0 0 0.6rem;
+    font-weight: 700;
+  }
+  .vp-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+  .vp-two-col img {
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 1.5px solid #475569;
+    background: #0f172a;
+  }
+  .vp-info-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .vp-info-item {
+    background: rgba(8, 12, 26, 0.5);
+    border: 1px solid #1e293b;
+    border-radius: 0.4rem;
+    padding: 0.5rem 0.7rem;
+  }
+  .vp-info-item label {
+    display: block;
+    font-size: 0.65rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.15rem;
+    font-weight: 600;
+  }
+  .vp-info-item .vi-val {
+    font-size: 0.9rem;
+    color: #fff;
+    font-weight: 600;
+  }
+  .vp-person-input {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #475569;
+    width: 100%;
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 600;
+    outline: none;
+    padding: 0.1rem 0;
+  }
+
+  /* Voice instruction bar inside steps */
+  .vp-voice-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0.85rem;
+    background: rgba(79, 70, 229, 0.1);
+    border: 1px solid rgba(79, 70, 229, 0.3);
+    border-radius: 0.5rem;
+    font-size: 0.83rem;
+    color: #a5b4fc;
+    line-height: 1.4;
+  }
+  .vp-voice-bar .vvb-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+
+  /* Voice popup action buttons */
+  .vp-actions {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .vp-btn {
+    flex: 1;
+    min-width: 140px;
+    padding: 0.75rem 1rem;
+    border: none;
+    border-radius: 0.55rem;
+    font-size: 0.88rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.22s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+  }
+  .vp-btn-yes {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+  }
+  .vp-btn-yes:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 14px rgba(16, 185, 129, 0.45);
+  }
+  .vp-btn-no {
+    background: rgba(239, 68, 68, 0.18);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #f87171;
+  }
+  .vp-btn-no:hover {
+    background: #ef4444;
+    color: #fff;
+  }
+
+  /* Sketch box inside voice popup */
+  #vpSketchBox {
+    background: rgba(8, 12, 26, 0.5);
+    border: 1px solid #334155;
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    text-align: center;
+    margin-top: 0.5rem;
+  }
+  #vpSketchBox img {
+    width: 100%;
+    max-height: 260px;
+    object-fit: contain;
+    border-radius: 0.4rem;
+    border: 1.5px solid #475569;
+    background: #fff;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+   RESULTS PANEL — shown below camera after voice task completes
+   ══════════════════════════════════════════════════════════════════════ */
+  #resultsPanel {
+    display: none;
+    margin-top: 1rem;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1.5px solid rgba(16, 185, 129, 0.3);
+    border-radius: 0.85rem;
+    padding: 1rem 1.2rem;
+    animation: slideUp 0.35s ease;
+  }
+  #resultsPanel.visible {
+    display: block;
+  }
+  #resultsPanel h3 {
+    font-size: 0.9rem;
+    color: #34d399;
+    font-weight: 700;
+    margin: 0 0 0.75rem;
+  }
+  #resultsGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+  #resultsGrid .res-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  #resultsGrid .res-col label {
+    font-size: 0.7rem;
+    color: #64748b;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  #resultsGrid img {
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 2px solid #475569;
+  }
+  #resultsClearBtn {
+    margin-top: 0.75rem;
+    padding: 0.4rem 0.9rem;
+    background: rgba(100, 116, 139, 0.2);
+    border: 1px solid rgba(100, 116, 139, 0.4);
+    border-radius: 0.4rem;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+  #resultsClearBtn:hover {
+    background: rgba(100, 116, 139, 0.4);
+    color: #fff;
+  }
+  /* ── Confidence badge ─────────────────────────────────────────────── */
+  .conf-badge {
+    display: inline-block;
+    padding: 0.3rem 0.75rem;
+    border-radius: 2rem;
+    font-size: 0.82rem;
+    font-weight: 700;
+    margin-top: 0.5rem;
+    letter-spacing: 0.02em;
+  }
+  .conf-high   { background: rgba(16,185,129,0.2); color: #34d399; border: 1px solid rgba(16,185,129,0.4); }
+  .conf-medium { background: rgba(245,158,11,0.2);  color: #fbbf24; border: 1px solid rgba(245,158,11,0.4); }
+  .conf-low    { background: rgba(239,68,68,0.2);   color: #f87171; border: 1px solid rgba(239,68,68,0.4); }
+
+  /* ── Camera status banner ──────────────────────────────────────────── */
+  #cameraErrorBanner {
+    display: none;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1.25rem;
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.45);
+    border-radius: 0.6rem;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #f87171;
+    font-weight: 600;
+  }
+  #cameraErrorBanner.visible { display: flex; }
+  #cameraErrorBanner .reconnect-btn {
+    margin-left: auto;
+    padding: 0.35rem 0.9rem;
+    background: rgba(239,68,68,0.2);
+    border: 1px solid rgba(239,68,68,0.5);
+    border-radius: 0.4rem;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 700;
+    transition: all 0.2s;
+  }
+  #cameraErrorBanner .reconnect-btn:hover { background: #ef4444; color: #fff; }
+
+</style>
+{% endblock %} {% block content %}
+<div class="main-layout">
+  <!-- ── Left: Video ──────────────────────────────────────────────── -->
+  <div class="video-section-main">
+    <div class="video-header">
+      <h2>🎥 Live Recognition</h2>
+      <div class="status-indicator">
+        <span id="datasetStatus" class="status-badge">Loading...</span>
+        <span id="commandStatus" class="status-badge">No command</span>
+        <span id="cameraStatus" class="status-badge status-success">📷 Camera OK</span>
+      </div>
+    </div>
+
+    <!-- Camera disconnected error banner -->
+    <div id="cameraErrorBanner">
+      <span>📷 Camera disconnected — stream unavailable</span>
+      <button class="reconnect-btn" onclick="manualReconnect()">🔄 Reconnect</button>
+    </div>
+
+    <!-- MODE TOGGLE — above camera -->
+    <div class="mode-toggle-bar">
+      <span class="mode-toggle-label">Mode:</span>
+      <button id="btnModeManual" class="mode-btn active-manual">
+        🖱️ Manual
+      </button>
+      <button id="btnModeVoice" class="mode-btn">🎙️ Voice System</button>
+    </div>
+
+    <div class="video-container-large">
+      <img
+        id="videoFeed"
+        src="{{ url_for('video_feed') }}"
+        alt="Live Video Feed"
+      />
+    </div>
+
+    <div id="noDatasetWarning" class="warning-message" style="display: none">
+      <span class="warning-icon">⚠️</span>
+      <span class="warning-text"
+        >No persons in dataset. Please add users first.</span
+      >
+      <a href="/capture" class="btn-warning-link">Add User</a>
+    </div>
+
+    <div id="snapshotArea" class="snapshot-display" style="display: none">
+      <div class="snapshot-header">
+        <h3>📸 Latest Snapshot</h3>
+        <button id="closeSnapshot" class="btn-close-snap">✕</button>
+      </div>
+      <img id="snapshotImage" src="" alt="Snapshot" />
+      <div class="snapshot-info">
+        <span id="snapshotTime"></span>
+        <span id="snapshotPerson"></span>
+      </div>
+    </div>
+
+    <!-- Results panel (shown after voice task completes) -->
+    <div id="resultsPanel">
+      <h3>✅ Task Complete — Results</h3>
+      <div id="resultsGrid">
+        <div class="res-col">
+          <label>📸 Snapshot</label>
+          <img id="resSnapshotImg" src="" alt="Snapshot" />
+        </div>
+        <div class="res-col">
+          <label>✏️ Sketch</label>
+          <img id="resSketchImg" src="" alt="Sketch" />
+        </div>
+      </div>
+      <button id="resultsClearBtn">✕ Clear results</button>
+    </div>
+  </div>
+
+  <!-- ── Right: Controls ─────────────────────────────────────────── -->
+  <div class="controls-section">
+    <div class="control-card">
+      <h3>🎯 Command Control</h3>
+      <div class="command-input-wrapper">
+        <label>Enter or speak a command:</label>
+        <div class="command-input-row">
+          <input
+            type="text"
+            id="commandInput"
+            placeholder="detect User1  OR  find person right to User1"
+            class="input-command"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="micBtn" class="btn-mic" title="Start voice input">
+            🎤
+          </button>
+        </div>
+        <div id="voiceStatusBar" class="voice-status-bar">
+          <div class="voice-dot"></div>
+          <span class="voice-status-text" id="voiceStatusText">Listening…</span>
+          <button id="cancelVoiceBtn" class="btn-cancel-voice">✕ Cancel</button>
+        </div>
+        <div class="command-buttons">
+          <button id="executeBtn" class="btn-primary-full">▶ Execute</button>
+          <button id="clearBtn" class="btn-secondary-full">✕ Clear</button>
+        </div>
+        <div id="commandFeedback" class="feedback-box"></div>
+        <p id="noSpeechNote" class="no-speech-note">
+          ⚠ Voice input not supported. Use text.
+        </p>
+      </div>
+      <div class="command-examples-mini">
+        <p class="example-label">Examples (click to use)</p>
+        <div class="examples-grid">
+          <code class="example-cmd" data-cmd="detect User1">detect User1</code>
+          <code class="example-cmd" data-cmd="identify Alice"
+            >identify Alice</code
+          >
+          <code class="example-cmd" data-cmd="find person right to User1"
+            >find person right to User1</code
+          >
+          <code class="example-cmd" data-cmd="scan left side of Bob"
+            >scan left side of Bob</code
+          >
+          <code class="example-cmd" data-cmd="who is standing right of Sarah"
+            >who is standing right of Sarah</code
+          >
+        </div>
+      </div>
+    </div>
+
+    <div class="control-card">
+      <h3>📷 Snapshot Control</h3>
+      <div class="snapshot-controls">
+        <button id="manualSnapshotBtn" class="btn-snapshot">
+          <span class="btn-icon">📸</span>Manual Snapshot
+        </button>
+        <div class="snapshot-mode">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoSnapshotMode" checked />
+            <span>Auto-capture on detection</span>
+          </label>
+        </div>
+        <div id="snapshotStatus" class="status-text"></div>
+      </div>
+    </div>
+
+    <div class="control-card">
+      <h3>ℹ️ Detection Info</h3>
+      <div class="info-stats">
+        <div class="stat-row">
+          <span class="stat-label">Faces Detected:</span
+          ><span id="faceCount" class="stat-value">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Anchor Person:</span
+          ><span id="anchorPerson" class="stat-value">-</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Target Found:</span
+          ><span id="targetFound" class="stat-value">-</span>
+        </div>
+      </div>
+      <div id="detectedFaces" class="detected-faces-list"></div>
+    </div>
+
+    <div class="control-card control-card-compact">
+      <h3>📊 System Status</h3>
+      <div class="quick-stats">
+        <div class="quick-stat">
+          <div class="quick-stat-value" id="totalPersons">0</div>
+          <div class="quick-stat-label">Persons</div>
+        </div>
+        <div class="quick-stat">
+          <div class="quick-stat-value" id="totalEmbeddings">0</div>
+          <div class="quick-stat-label">Embeddings</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ VERIFICATION MODAL (Manual mode) ════════════════════════════════ -->
+<div id="verificationModal" class="verification-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 class="modal-title" id="modalTitle">📸 Verify Detection</h2>
+      <button id="closeModal" class="btn-close-modal">✕</button>
+    </div>
+    <div class="step-bar">
+      <div class="step-item active" id="stepItem1">
+        <div class="step-num">1</div>
+        <div class="step-label">Person</div>
+      </div>
+      <div class="step-item" id="stepItem2">
+        <div class="step-num">2</div>
+        <div class="step-label">Snapshot</div>
+      </div>
+      <div class="step-item" id="stepItem3">
+        <div class="step-num">3</div>
+        <div class="step-label">Sketch</div>
+      </div>
+    </div>
+    <div class="voice-line-bar visible" id="voiceLineBar">
+      <span class="voice-line-icon">🔊</span>
+      <span id="voiceLineText">Detecting…</span>
+    </div>
+    <div class="step-panel active" id="stepPanel1">
+      <div class="modal-body">
+        <div class="snapshot-preview">
+          <h3>Captured Image</h3>
+          <img id="modalSnapshotImg" src="" alt="" />
+        </div>
+        <div class="verification-info">
+          <div class="info-field">
+            <div class="info-label">
+              Detected as
+              <small style="color: #64748b; font-weight: 400"
+                >(edit if wrong)</small
+              >
+            </div>
+            <input
+              type="text"
+              id="modalPersonName"
+              class="info-value"
+              style="
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid #475569;
+                width: 100%;
+                color: #fff;
+                font-size: 1.1rem;
+                font-weight: 600;
+                outline: none;
+                padding: 0.1rem 0;
+              "
+              placeholder="Person name"
+            />
+          </div>
+          <div class="info-field">
+            <div class="info-label">Position</div>
+            <div class="info-value" id="modalPositionText">—</div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Timestamp</div>
+            <div class="info-value" id="modalTimestamp">—</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnPersonYes" class="btn-modal-action btn-save">
+          ✓ Yes, this is correct
+        </button>
+        <button id="btnPersonNo" class="btn-modal-action btn-discard">
+          ✗ Wrong person — retake
+        </button>
+      </div>
+    </div>
+    <div class="step-panel" id="stepPanel2">
+      <div class="modal-body">
+        <div class="snapshot-preview">
+          <h3>Snapshot Quality</h3>
+          <img id="modalSnapshotImg2" src="" alt="" />
+        </div>
+        <div class="verification-info">
+          <div class="info-field">
+            <div class="info-label">Person</div>
+            <div class="info-value" id="step2PersonName">—</div>
+          </div>
+          <div
+            class="info-field"
+            style="
+              background: rgba(14, 165, 233, 0.08);
+              border-color: rgba(14, 165, 233, 0.3);
+            "
+          >
+            <div class="info-label" style="color: #38bdf8">Check the image</div>
+            <div
+              class="info-value"
+              style="font-size: 0.9rem; color: #cbd5e1; font-weight: 400"
+            >
+              Is the face clearly visible? Sharp and well-lit? If blurry, click
+              Retake.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnSnapshotGood" class="btn-modal-action btn-save">
+          ✓ Looks good — generate sketch
+        </button>
+        <button id="btnSnapshotRetake" class="btn-modal-action btn-discard">
+          ↺ Blurry / cut off — retake
+        </button>
+      </div>
+    </div>
+    <div class="step-panel" id="stepPanel3">
+      <div class="sketch-preview-box">
+        <div id="sketchSpinner" class="sketch-status-msg processing">
+          ⏳ Generating sketch…
+        </div>
+        <img id="sketchPreviewImg" src="" alt="Sketch" style="display: none" />
+        <div
+          id="sketchStatusMsg"
+          class="sketch-status-msg"
+          style="display: none"
+        ></div>
+      </div>
+      <div
+        class="modal-actions"
+        id="sketchActions"
+        style="margin-top: 1rem; display: none"
+      >
+        <button id="btnSketchGood" class="btn-modal-action btn-save">
+          ✓ Sketch looks good — finalise
+        </button>
+        <button id="btnSketchRetake" class="btn-modal-action btn-discard">
+          ↺ Not good enough — retake
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ VOICE SYSTEM POPUP ═══════════════════════════════════════════════ -->
+<div id="voicePopup">
+  <!-- LEFT 30%: Chat -->
+  <div id="vpChat">
+    <div id="vpChatHead">
+      <span class="vp-title">🤖 Voice System</span>
+      <span id="vpStatusPill" class="idle">● Standby</span>
+    </div>
+    <div id="vpMessages">
+      <div class="vpmsg vpmsg-sys">
+        <span class="vpmsg-who">SYSTEM</span>
+        Voice system ready. Speak your command to begin — e.g.
+        <em>"detect User1"</em> or <em>"find person right to User1"</em>.
+      </div>
+    </div>
+    <div id="vpTranscriptBar">
+      <div class="vp-dot" id="vpDot"></div>
+      <span id="vpLiveText">Waiting for command…</span>
+    </div>
+  </div>
+
+  <!-- RIGHT 70%: Camera + steps -->
+  <div id="vpRight">
+    <div id="vpTopBar">
+      <h3>🎥 Live Detection</h3>
+      <button id="vpExitBtn">✕ Exit Voice Mode</button>
+    </div>
+    <div id="vpContent">
+      <!-- Camera feed inside popup -->
+      <div id="vpCameraWrap">
+        <img src="{{ url_for('video_feed') }}" alt="Live Feed" />
+      </div>
+
+      <!-- Waiting state -->
+      <div id="vpWaiting">
+        <div class="vw-icon">🎙️</div>
+        <div class="vw-title">Speak a command to start</div>
+        <div class="vw-sub">
+          Say something like:<br />
+          <em>"detect User1"</em> · <em>"find person right to User1"</em>
+        </div>
+      </div>
+
+      <!-- Step-by-step verification (voice-driven) -->
+      <div id="vpSteps">
+        <!-- Step 1: Person confirm -->
+        <div class="vp-step-card" id="vpStep1Card">
+          <h4>Step 1 — Confirm Person</h4>
+          <div class="vp-voice-bar">
+            <span class="vvb-icon">🔊</span>
+            <span id="vpStep1Voice">Checking…</span>
+          </div>
+          <div class="vp-two-col">
+            <img id="vpStep1Img" src="" alt="" />
+            <div class="vp-info-list">
+              <div class="vp-info-item">
+                <label>Detected as (edit if wrong)</label>
+                <input
+                  type="text"
+                  id="vpPersonName"
+                  class="vp-person-input"
+                  placeholder="Person name"
+                />
+              </div>
+              <div class="vp-info-item">
+                <label>Position</label>
+                <div class="vi-val" id="vpPositionText">—</div>
+              </div>
+              <div class="vp-info-item">
+                <label>Recognition Confidence</label>
+                <span id="vpConfidenceBadge" class="conf-badge conf-medium">—</span>
+              </div>
+            </div>
+          </div>
+          <div class="vp-actions">
+            <button class="vp-btn vp-btn-yes" id="vpBtnYes1">
+              ✓ Yes, correct
+            </button>
+            <button class="vp-btn vp-btn-no" id="vpBtnNo1">
+              ✗ Wrong person
+            </button>
+          </div>
+        </div>
+
+        <!-- Step 2: Snapshot quality -->
+        <div class="vp-step-card" id="vpStep2Card" style="display: none">
+          <h4>Step 2 — Snapshot Quality</h4>
+          <div class="vp-voice-bar">
+            <span class="vvb-icon">🔊</span>
+            <span id="vpStep2Voice"
+              >Is the snapshot clear and well framed?</span
+            >
+          </div>
+          <div class="vp-two-col">
+            <img id="vpStep2Img" src="" alt="" />
+            <div class="vp-info-list">
+              <div class="vp-info-item">
+                <label>Person</label>
+                <div class="vi-val" id="vpStep2Person">—</div>
+              </div>
+              <div
+                class="vp-info-item"
+                style="
+                  background: rgba(14, 165, 233, 0.08);
+                  border-color: rgba(14, 165, 233, 0.3);
+                "
+              >
+                <label style="color: #38bdf8">Check</label>
+                <div
+                  class="vi-val"
+                  style="font-size: 0.8rem; font-weight: 400; color: #cbd5e1"
+                >
+                  Is the face sharp and well-lit?
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="vp-actions">
+            <button class="vp-btn vp-btn-yes" id="vpBtnYes2">
+              ✓ Looks good
+            </button>
+            <button class="vp-btn vp-btn-no" id="vpBtnNo2">
+              ↺ Blurry — retake
+            </button>
+          </div>
+        </div>
+
+        <!-- Step 3: Sketch review -->
+        <div class="vp-step-card" id="vpStep3Card" style="display: none">
+          <h4>Step 3 — Sketch Review</h4>
+          <div class="vp-voice-bar">
+            <span class="vvb-icon">🔊</span>
+            <span id="vpStep3Voice">Reviewing sketch…</span>
+          </div>
+          <div id="vpSketchBox">
+            <div id="vpSketchSpinner" class="sketch-status-msg processing">
+              ⏳ Generating sketch…
+            </div>
+            <img id="vpSketchImg" src="" alt="Sketch" style="display: none" />
+            <div
+              id="vpSketchMsg"
+              class="sketch-status-msg"
+              style="display: none"
+            ></div>
+          </div>
+          <div class="vp-actions" id="vpSketchActions" style="display: none">
+            <button class="vp-btn vp-btn-yes" id="vpBtnYes3">
+              ✓ Send to laser
+            </button>
+            <button class="vp-btn vp-btn-no" id="vpBtnNo3">
+              ↺ Retake snapshot
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block extra_js %}
+<script>
+  /* ====================================================================
+   GLOBALS
+   ==================================================================== */
+  let autoSnapshotEnabled = true;
+  let lastSnapshotTime = 0;
+  let currentCommand = null;
+  let pendingSnapshot = null;
+  let appMode = "manual"; // "manual" | "voice"
+
+  /* ====================================================================
+   MODE TOGGLE
+   ==================================================================== */
+  const btnModeManual = document.getElementById("btnModeManual");
+  const btnModeVoice = document.getElementById("btnModeVoice");
+  const voicePopup = document.getElementById("voicePopup");
+
+  btnModeManual.addEventListener("click", () => {
+    if (appMode === "manual") return;
+    appMode = "manual";
+    btnModeManual.className = "mode-btn active-manual";
+    btnModeVoice.className = "mode-btn";
+    voicePopup.classList.remove("open");
+    vpStopListening();
+  });
+
+  btnModeVoice.addEventListener("click", () => {
+    if (appMode === "voice") return;
+    appMode = "voice";
+    btnModeVoice.className = "mode-btn active-voice";
+    btnModeManual.className = "mode-btn";
+    voicePopup.classList.add("open");
+    vpAddMsg("sys", "Voice System activated. Speak your command now.");
+    vpSetStatus("active", "Listening…");
+    vpStartCommandListen();
+  });
+
+  document.getElementById("vpExitBtn").addEventListener("click", () => {
+    btnModeManual.click();
+  });
+
+  /* ====================================================================
+   MANUAL MODE — Speech recognition (command input only)
+   ==================================================================== */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  let manualRec = null;
+  let isRecording = false;
+  let voiceAborted = false;
+
+  const micBtn = document.getElementById("micBtn");
+  const cancelVoiceBtn = document.getElementById("cancelVoiceBtn");
+  const voiceStatusBar = document.getElementById("voiceStatusBar");
+  const voiceStatusText = document.getElementById("voiceStatusText");
+  const commandInput = document.getElementById("commandInput");
+
+  if (!SR) {
+    micBtn.style.display = "none";
+    document.getElementById("noSpeechNote").style.display = "block";
+  } else {
+    setupManualRec();
+  }
+
+  function setupManualRec() {
+    manualRec = new SR();
+    manualRec.lang = "en-US";
+    manualRec.interimResults = true;
+    manualRec.maxAlternatives = 1;
+    manualRec.continuous = false;
+    manualRec.onresult = (e) => {
+      let interim = "",
+        final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
+      }
+      if (final) {
+        commandInput.value = final.trim();
+        voiceStatusText.textContent = `✓ Got: "${final.trim()}"`;
+        stopRecording(false);
+      } else if (interim) {
+        commandInput.value = interim;
+        voiceStatusText.textContent = `Listening… "${interim}"`;
+      }
+    };
+    manualRec.onerror = (e) => {
+      if (voiceAborted) return;
+      const m = {
+        "no-speech": "No speech detected.",
+        "audio-capture": "Mic not found.",
+        "not-allowed": "Permission denied.",
+      };
+      voiceStatusText.textContent = m[e.error] || `Error: ${e.error}`;
+      stopRecording(false);
+    };
+    manualRec.onend = () => {
+      if (voiceAborted) commandInput.value = "";
+      stopRecording(false);
+    };
+  }
+
+  micBtn.addEventListener("click", () => {
+    isRecording ? stopRecording(true) : startRecording();
+  });
+  cancelVoiceBtn.addEventListener("click", () => stopRecording(true, true));
+
+  /* ── Mic-mute guard: polls backend until TTS + tail are fully done ── */
+  async function waitUntilSilent() {
+    while (true) {
+      try {
+        const d = await fetch("/api/speaking_state").then((r) => r.json());
+        if (!d.speaking) return;
+      } catch (_) {
+        return;
+      } // network error → don't block forever
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
+  async function startRecording() {
+    if (!manualRec) return;
+    voiceAborted = false;
+    isRecording = true;
+    commandInput.value = "";
+    commandInput.classList.add("voice-active");
+    micBtn.classList.add("recording");
+    micBtn.title = "Recording… click to stop";
+    micBtn.textContent = "⏹";
+    voiceStatusBar.classList.add("visible");
+    voiceStatusText.textContent = "Waiting for system to finish…";
+    // Mute mic until TTS + tail are fully done
+    await waitUntilSilent();
+    if (!isRecording) return; // user cancelled while waiting
+    voiceStatusText.textContent = "Listening…";
+    try {
+      manualRec.start();
+    } catch (e) {}
+  }
+  function stopRecording(userStopped = false, cancel = false) {
+    if (!isRecording && !cancel) return;
+    if (cancel) voiceAborted = true;
+    isRecording = false;
+    commandInput.classList.remove("voice-active");
+    micBtn.classList.remove("recording");
+    micBtn.title = "Start voice input";
+    micBtn.textContent = "🎤";
+    try {
+      manualRec.abort();
+    } catch (e) {}
+    setTimeout(
+      () => {
+        voiceStatusBar.classList.remove("visible");
+        voiceStatusText.textContent = "Listening…";
+        if (cancel) commandInput.value = "";
+      },
+      cancel ? 0 : 1200,
+    );
+  }
+
+  /* ====================================================================
+   MANUAL COMMAND EXECUTION
+   ==================================================================== */
+  function executeCommand() {
+    const cmd = commandInput.value.trim();
+    const fb = document.getElementById("commandFeedback");
+    if (!cmd) {
+      fb.textContent = "⚠ Please enter or speak a command";
+      fb.className = "feedback-box feedback-error";
+      return;
+    }
+    fetch("/api/set_command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          fb.textContent = "✓ " + data.message;
+          fb.className = "feedback-box feedback-success";
+          currentCommand = data.command;
+          const cs = document.getElementById("commandStatus");
+          cs.textContent = "▶ Active";
+          cs.className = "status-badge status-active";
+        } else {
+          fb.textContent = "✗ " + data.message;
+          fb.className = "feedback-box feedback-error";
+        }
+      })
+      .catch(() => {
+        fb.textContent = "✗ Network error";
+        fb.className = "feedback-box feedback-error";
+      });
+  }
+  document
+    .getElementById("executeBtn")
+    .addEventListener("click", executeCommand);
+  commandInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") executeCommand();
+  });
+  document.getElementById("clearBtn").addEventListener("click", () => {
+    commandInput.value = "";
+    document.getElementById("commandFeedback").textContent = "";
+    currentCommand = null;
+    const cs = document.getElementById("commandStatus");
+    cs.textContent = "No command";
+    cs.className = "status-badge";
+    fetch("/api/clear_command", { method: "POST" });
+  });
+  document.querySelectorAll(".example-cmd").forEach((el) => {
+    el.addEventListener("click", function () {
+      commandInput.value = this.dataset.cmd;
+      commandInput.focus();
+    });
+  });
+
+  /* ====================================================================
+   SNAPSHOT (shared between modes)
+   ==================================================================== */
+  document
+    .getElementById("autoSnapshotMode")
+    .addEventListener("change", function () {
+      autoSnapshotEnabled = this.checked;
+      document.getElementById("snapshotStatus").textContent =
+        autoSnapshotEnabled ? "✓ Auto-capture enabled" : "";
+    });
+  document
+    .getElementById("manualSnapshotBtn")
+    .addEventListener("click", () => captureSnapshot());
+  document.getElementById("closeSnapshot").addEventListener("click", () => {
+    document.getElementById("snapshotArea").style.display = "none";
+  });
+
+  function captureSnapshot() {
+    const now = Date.now();
+    if (now - lastSnapshotTime < 2000) return;
+    lastSnapshotTime = now;
+    fetch("/api/capture_snapshot", { method: "POST" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          showSnapshot(data.filename);
+          if (appMode === "manual") openVerificationModal(data.filename);
+          const ss = document.getElementById("snapshotStatus");
+          ss.textContent = `✓ Saved: ${data.filename}`;
+          ss.className = "status-text status-success";
+          setTimeout(() => {
+            ss.textContent = "";
+          }, 3000);
+        }
+      })
+      .catch(console.error);
+  }
+
+  function showSnapshot(filename) {
+    document.getElementById("snapshotImage").src =
+      `/api/get_snapshot/${filename}`;
+    document.getElementById("snapshotTime").textContent =
+      new Date().toLocaleTimeString();
+    document.getElementById("snapshotArea").style.display = "block";
+  }
+
+  /* ====================================================================
+   MANUAL VERIFICATION MODAL — 3-step button flow (unchanged)
+   ==================================================================== */
+  const verificationModal = document.getElementById("verificationModal");
+  const voiceLineBar = document.getElementById("voiceLineBar");
+  const voiceLineText = document.getElementById("voiceLineText");
+
+  document
+    .getElementById("closeModal")
+    .addEventListener("click", closeVerificationModal);
+
+  function setStep(n) {
+    [1, 2, 3].forEach((i) => {
+      document
+        .getElementById(`stepPanel${i}`)
+        .classList.toggle("active", i === n);
+      const si = document.getElementById(`stepItem${i}`);
+      si.classList.remove("active", "done");
+      if (i < n) si.classList.add("done");
+      if (i === n) si.classList.add("active");
+    });
+    const titles = {
+      1: "📸 Verify Detection",
+      2: "🔍 Snapshot Quality",
+      3: "✏️ Sketch Review",
+    };
+    document.getElementById("modalTitle").textContent = titles[n];
+  }
+
+  function manualSay(text) {
+    voiceLineBar.classList.add("visible");
+    voiceLineText.textContent = text;
+    return fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).catch(() => {});
+  }
+
+  async function resetSnapshotLock() {
+    await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
+  }
+
+  function openVerificationModal(filename, overrideName, overridePos) {
+    pendingSnapshot = { filename };
+    document.getElementById("modalSnapshotImg").src =
+      `/api/get_snapshot/${filename}`;
+    document.getElementById("modalSnapshotImg2").src =
+      `/api/get_snapshot/${filename}`;
+    const name =
+      overrideName ||
+      (currentCommand ? currentCommand.reference_person : "") ||
+      "";
+    document.getElementById("modalPersonName").value = name;
+    if (overridePos) {
+      document.getElementById("modalPositionText").textContent = overridePos;
+    } else if (currentCommand) {
+      document.getElementById("modalPositionText").textContent =
+        currentCommand.mode === "single"
+          ? `Single detection of ${currentCommand.reference_person}`
+          : `Person to the ${currentCommand.direction} of ${currentCommand.reference_person}`;
+    } else {
+      document.getElementById("modalPositionText").textContent =
+        "Manual snapshot";
+    }
+    document.getElementById("modalTimestamp").textContent =
+      new Date().toLocaleString();
+    document.getElementById("sketchSpinner").style.display = "block";
+    document.getElementById("sketchPreviewImg").style.display = "none";
+    document.getElementById("sketchStatusMsg").style.display = "none";
+    document.getElementById("sketchActions").style.display = "none";
+    setStep(1);
+    verificationModal.classList.add("visible");
+
+    // Speak confirmation question ONCE (backend no longer speaks it)
+    const ref = currentCommand ? currentCommand.reference_person : "";
+    const mode = currentCommand ? currentCommand.mode : "";
+    if (mode === "single") {
+      manualSay(
+        `I have detected ${name}. Could you confirm — is this the correct person?`,
+      );
+    } else if (mode === "directional") {
+      manualSay(
+        `I found someone at the detected position near ${ref}. Is this the right person?`,
+      );
+    } else {
+      manualSay("Please confirm: is this the correct person?");
+    }
+    setTimeout(() => document.getElementById("modalPersonName").focus(), 100);
+  }
+
+  function closeVerificationModal() {
+    verificationModal.classList.remove("visible");
+    pendingSnapshot = null;
+  }
+
+  document.getElementById("btnPersonYes").addEventListener("click", () => {
+    if (!pendingSnapshot) return;
+    document.getElementById("step2PersonName").textContent =
+      document.getElementById("modalPersonName").value.trim() || "Unknown";
+    setStep(2);
+    manualSay(
+      "Great. Please check the snapshot — is the image clear and well framed?",
+    );
+  });
+
+  document.getElementById("btnPersonNo").addEventListener("click", async () => {
+    if (!pendingSnapshot) return;
+    await manualSay(
+      "Understood. I will discard this and watch for the next detection.",
+    );
+    await fetch("/api/discard_snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: pendingSnapshot.filename }),
+    }).catch(() => {});
+    await resetSnapshotLock();
+    closeVerificationModal();
+    Utils.notify("Wrong person — ready for next detection", "info");
+  });
+
+  document
+    .getElementById("btnSnapshotGood")
+    .addEventListener("click", async () => {
+      if (!pendingSnapshot) return;
+      await manualSay("Good. Generating the sketch now — please wait.");
+      setStep(3);
+      const personName =
+        document.getElementById("modalPersonName").value.trim() || "Unknown";
+      const positionDesc =
+        document.getElementById("modalPositionText").textContent;
+      try {
+        const res = await fetch("/api/verify_snapshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            temp_filename: pendingSnapshot.filename,
+            person_name: personName,
+            position_desc: positionDesc,
+            create_sketch: true,
+            company: "AABBCC",
+          }),
+        });
+        const data = await res.json();
+        document.getElementById("sketchSpinner").style.display = "none";
+        if (data.success && data.sketch_filename) {
+          const img = document.getElementById("sketchPreviewImg");
+          img.src = `/api/get_snapshot/${data.sketch_filename}`;
+          img.style.display = "block";
+          pendingSnapshot.verified_filename = data.verified_filename;
+          pendingSnapshot.sketch_filename = data.sketch_filename;
+          const msg = document.getElementById("sketchStatusMsg");
+          msg.textContent = "✓ Sketch generated";
+          msg.className = "sketch-status-msg success";
+          msg.style.display = "block";
+          document.getElementById("sketchActions").style.display = "flex";
+          manualSay(
+            "Here is the sketch. Does it look good enough to send to the laser machine?",
+          );
+        } else {
+          const msg = document.getElementById("sketchStatusMsg");
+          msg.textContent = "✗ Sketch failed — " + (data.message || "");
+          msg.className = "sketch-status-msg error";
+          msg.style.display = "block";
+          document.getElementById("sketchActions").style.display = "flex";
+          manualSay(
+            "I was not able to generate the sketch. Would you like to retake the snapshot?",
+          );
+        }
+      } catch (err) {
+        document.getElementById("sketchSpinner").style.display = "none";
+        const msg = document.getElementById("sketchStatusMsg");
+        msg.textContent = "✗ Network error";
+        msg.className = "sketch-status-msg error";
+        msg.style.display = "block";
+        document.getElementById("sketchActions").style.display = "flex";
+      }
+    });
+
+  document
+    .getElementById("btnSnapshotRetake")
+    .addEventListener("click", async () => {
+      if (!pendingSnapshot) return;
+      await manualSay("No problem. Discarding and taking a fresh snapshot.");
+      await fetch("/api/discard_snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: pendingSnapshot.filename }),
+      }).catch(() => {});
+      await resetSnapshotLock();
+      closeVerificationModal();
+      Utils.notify("Snapshot discarded — ready to retake", "info");
+    });
+
+  document
+    .getElementById("btnSketchGood")
+    .addEventListener("click", async () => {
+      if (!pendingSnapshot) return;
+      const name =
+        document.getElementById("modalPersonName").value.trim() || "Unknown";
+      await manualSay(
+        `Excellent. Sketch for ${name} finalised. Sending to production.`,
+      );
+      closeVerificationModal();
+      Utils.notify(`✓ Sketch for ${name} finalised`, "success");
+    });
+
+  document
+    .getElementById("btnSketchRetake")
+    .addEventListener("click", async () => {
+      if (!pendingSnapshot) return;
+      await manualSay("Understood. Retaking the snapshot for a better sketch.");
+      const toDelete = [pendingSnapshot.filename];
+      if (pendingSnapshot.verified_filename)
+        toDelete.push(pendingSnapshot.verified_filename);
+      for (const fn of toDelete) {
+        await fetch("/api/discard_snapshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: fn }),
+        }).catch(() => {});
+      }
+      await resetSnapshotLock();
+      closeVerificationModal();
+      Utils.notify("Sketch not accepted — ready to retake snapshot", "info");
+    });
+
+  /* ====================================================================
+   VOICE SYSTEM — fully automated flow
+   ==================================================================== */
+  const vpMessages = document.getElementById("vpMessages");
+  const vpStatusPill = document.getElementById("vpStatusPill");
+  const vpDot = document.getElementById("vpDot");
+  const vpLiveText = document.getElementById("vpLiveText");
+  const vpWaiting = document.getElementById("vpWaiting");
+  const vpSteps = document.getElementById("vpSteps");
+
+  let vpRec = null; // active SpeechRecognition instance
+  let vpCancelled = false; // abort flag
+  let vpFlowActive = false; // true while automated flow is running
+
+  /* ── helpers ── */
+  function vpAddMsg(who, text) {
+    const el = document.createElement("div");
+    el.className = "vpmsg " + (who === "sys" ? "vpmsg-sys" : "vpmsg-user");
+    el.innerHTML = `<span class="vpmsg-who">${who === "sys" ? "SYSTEM" : "YOU"}</span>${text}`;
+    vpMessages.appendChild(el);
+    setTimeout(() => {
+      vpMessages.scrollTop = vpMessages.scrollHeight;
+    }, 60);
+  }
+  function vpAddPrompt() {
+    const old = vpMessages.querySelector(".vpmsg-prompt");
+    if (old) old.remove();
+    const el = document.createElement("div");
+    el.className = "vpmsg vpmsg-prompt";
+    el.textContent = "🎙️ Speak now — yes or no…";
+    vpMessages.appendChild(el);
+    setTimeout(() => {
+      vpMessages.scrollTop = vpMessages.scrollHeight;
+    }, 60);
+  }
+  function vpClearPrompt() {
+    const el = vpMessages.querySelector(".vpmsg-prompt");
+    if (el) el.remove();
+  }
+  function vpSetStatus(mode, text) {
+    const labels = {
+      idle: "● Standby",
+      active: "● Active",
+      speaking: "● Speaking…",
+      listening: "● Listening…",
+    };
+    vpStatusPill.className = mode;
+    vpStatusPill.textContent = labels[mode] || text || "";
+    if (text) vpLiveText.textContent = text;
+  }
+
+  /* ── system speak ── */
+  function vpSay(text) {
+    vpAddMsg("sys", text);
+    vpSetStatus("speaking", text.length > 55 ? text.slice(0, 55) + "…" : text);
+    return fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).catch(() => {});
+  }
+
+  /* ── stop any active listening ── */
+  function vpStopListening() {
+    vpCancelled = true;
+    try {
+      if (vpRec) vpRec.abort();
+    } catch (e) {}
+    vpDot.style.visibility = "hidden";
+  }
+
+  /* ── one-shot speech recogniser — returns Promise<string> ── */
+  async function vpListen(hint) {
+    // Mute mic until TTS + tail are fully done
+    await waitUntilSilent();
+
+    return new Promise((resolve) => {
+      if (!SR) {
+        resolve("");
+        return;
+      }
+      vpCancelled = false;
+      vpDot.style.visibility = "visible";
+      vpSetStatus("listening", hint || "Listening…");
+      vpAddPrompt();
+
+      const rec = new SR();
+      vpRec = rec;
+      rec.lang = "en-US";
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.maxAlternatives = 3;
+
+      let finalText = "";
+      rec.onresult = (ev) => {
+        let interim = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const t = ev.results[i][0].transcript;
+          if (ev.results[i].isFinal) finalText += t;
+          else interim += t;
+        }
+        vpLiveText.textContent = finalText || interim || "…";
+      };
+      rec.onend = () => {
+        vpDot.style.visibility = "hidden";
+        vpClearPrompt();
+        if (finalText) vpAddMsg("user", finalText.trim());
+        resolve(finalText.trim());
+      };
+      rec.onerror = (ev) => {
+        vpDot.style.visibility = "hidden";
+        vpClearPrompt();
+        if (ev.error !== "aborted")
+          vpLiveText.textContent = "Error: " + ev.error;
+        resolve(finalText.trim());
+      };
+      try {
+        rec.start();
+      } catch (e) {
+        vpClearPrompt();
+        resolve("");
+      }
+    });
+  }
+
+  /* ── yes/no listener — retries 3×, returns "yes"|"no"|null ── */
+  async function vpListenYesNo(question, hint) {
+    await vpSay(question);
+    await vpDelay(400);
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (vpCancelled) return null;
+      const text = await vpListen(hint || "Say YES or NO");
+      if (vpCancelled) return null;
+
+      const t = text.toLowerCase();
+      if (
+        /\byes\b|\byeah\b|\byep\b|\bcorrect\b|\bconfirm\b|\bproceed\b|\bgood\b|\bok\b|\bsure\b/.test(
+          t,
+        )
+      ) {
+        vpLiveText.textContent = `"${text}" → YES ✓`;
+        vpAddMsg("sys", "✓ Heard: YES");
+        await vpDelay(350);
+        return "yes";
+      }
+      if (
+        /\bno\b|\bnope\b|\bwrong\b|\bretake\b|\bagain\b|\bdiscard\b/.test(t)
+      ) {
+        vpLiveText.textContent = `"${text}" → NO ✗`;
+        vpAddMsg("sys", "✗ Heard: NO");
+        await vpDelay(350);
+        return "no";
+      }
+
+      if (attempt < 2) {
+        vpLiveText.textContent = `Heard: "${text}" — please try again`;
+        await vpSay("I didn't catch that. Please say YES or NO clearly.");
+        await vpDelay(300);
+      }
+    }
+    await vpSay("I could not hear a clear answer. Please use the buttons.");
+    return null;
+  }
+
+  function vpDelay(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   VOICE COMMAND CAPTURE
+   ──────────────────────────────────────────────────────────────────── */
+  async function vpStartCommandListen() {
+    if (!SR) {
+      vpAddMsg("sys", "⚠ Web Speech API not supported in this browser.");
+      vpSetStatus("idle", "No mic support");
+      return;
+    }
+    vpFlowActive = false;
+    vpSetStatus("active", "Speak your command…");
+    vpLiveText.textContent = "Listening for your command…";
+    vpDot.style.visibility = "visible";
+    vpCancelled = false;
+
+    const text = await vpListen("Speak command");
+    vpDot.style.visibility = "hidden";
+
+    if (vpCancelled || !text) {
+      vpSetStatus("idle", "No command heard — try again");
+      await vpDelay(800);
+      if (!vpCancelled) vpStartCommandListen(); // restart
+      return;
+    }
+
+    vpSetStatus("speaking", "Processing…");
+    vpLiveText.textContent = 'Processing: "' + text + '"';
+
+    try {
+      const res = await fetch("/api/voice_command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        currentCommand = data.command;
+        document.getElementById("commandInput").value = text;
+        const fb = document.getElementById("commandFeedback");
+        fb.textContent = "✓ " + data.message;
+        fb.className = "feedback-box feedback-success";
+        const cs = document.getElementById("commandStatus");
+        cs.textContent = "▶ Active";
+        cs.className = "status-badge status-active";
+        await vpSay("Command understood: " + data.message + ". Searching now…");
+        vpSetStatus("active", "Waiting for detection…");
+        vpLiveText.textContent = "Searching… speak after detection";
+      } else {
+        await vpSay(
+          data.message ||
+            "I could not understand that command. Please try again.",
+        );
+        if (!vpCancelled) vpStartCommandListen();
+      }
+    } catch (err) {
+      await vpSay("Network error. Please try again.");
+      if (!vpCancelled) vpStartCommandListen();
+    }
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   VOICE VERIFICATION FLOW — triggered when pending snapshot arrives
+   ──────────────────────────────────────────────────────────────────── */
+  /* ====================================================================
+   CONFIDENCE BADGE HELPER
+   ==================================================================== */
+  function updateConfidenceBadge(score) {
+    const badge = document.getElementById("vpConfidenceBadge");
+    if (!badge) return;
+    if (score == null) {
+      badge.textContent = "—";
+      badge.className   = "conf-badge conf-medium";
+      return;
+    }
+    const pct = Math.round(score);
+    let cls, label;
+    if (pct >= 80)      { cls = "conf-high";   label = `${pct}% — High`; }
+    else if (pct >= 60) { cls = "conf-medium"; label = `${pct}% — Medium`; }
+    else                { cls = "conf-low";    label = `${pct}% — Low`; }
+    badge.textContent = label;
+    badge.className   = "conf-badge " + cls;
+  }
+
+  /* ====================================================================
+   CAMERA STATUS POLL — checks /api/camera_status every 5 s
+   Shows error banner + updates nav badge when camera disconnects.
+   Hides banner and restores badge when camera comes back.
+   ==================================================================== */
+  function checkCameraStatus() {
+    fetch("/api/camera_status")
+      .then(r => r.json())
+      .then(data => {
+        const badge  = document.getElementById("cameraStatus");
+        const banner = document.getElementById("cameraErrorBanner");
+        if (!badge || !banner) return;
+
+        if (data.status === "ok") {
+          badge.textContent  = "📷 Camera OK";
+          badge.className    = "status-badge status-success";
+          banner.classList.remove("visible");
+        } else if (data.status === "reconnecting") {
+          badge.textContent  = "🔄 Reconnecting…";
+          badge.className    = "status-badge status-warning";
+          banner.classList.add("visible");
+        } else {
+          badge.textContent  = "📷 Camera Error";
+          badge.className    = "status-badge";
+          banner.classList.add("visible");
+        }
+      })
+      .catch(() => {});
+  }
+
+  function manualReconnect() {
+    const badge  = document.getElementById("cameraStatus");
+    const banner = document.getElementById("cameraErrorBanner");
+    if (badge)  { badge.textContent = "🔄 Reconnecting…"; badge.className = "status-badge status-warning"; }
+    fetch("/api/reconnect_camera", { method: "POST" })
+      .then(r => r.json())
+      .then(() => { setTimeout(checkCameraStatus, 2000); })
+      .catch(() => {});
+  }
+
+  // Start camera status polling
+  checkCameraStatus();
+  setInterval(checkCameraStatus, 5000);
+
+  /* ====================================================================
+   HELPERS — used by vpRunVerificationFlow
+   ==================================================================== */
+
+  // Stop all detection on backend: clears command + drains snapshot queue.
+  // Must be called before any wait so no stale crops arrive unexpectedly.
+  async function vpPauseDetection() {
+    await fetch("/api/clear_command", { method: "POST" }).catch(() => {});
+    await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
+    currentCommand = null;
+    const cs = document.getElementById("commandStatus");
+    if (cs) {
+      cs.textContent = "No command";
+      cs.className = "status-badge";
+    }
+    const ci = document.getElementById("commandInput");
+    if (ci) ci.value = "";
+  }
+
+  // Discard one or more snapshot files from disk.
+  async function vpDiscardFiles(...filenames) {
+    for (const fn of filenames.filter(Boolean)) {
+      await fetch("/api/discard_snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: fn }),
+      }).catch(() => {});
+    }
+  }
+
+  // Show one step card, hide the others. Pass null to hide all.
+  function vpShowCard(n) {
+    [1, 2, 3].forEach((i) => {
+      const el = document.getElementById(`vpStep${i}Card`);
+      if (el) el.style.display = i === n ? "" : "none";
+    });
+  }
+
+  // Ask one YES/NO question. Waits for voice OR button — user MUST respond.
+  // Never auto-resolves. Returns "yes", "no", or null (cancelled).
+  async function vpAskYesNo(stepN, questionText, voiceHint) {
+    document.getElementById(`vpStep${stepN}Voice`).textContent = questionText;
+    let resolver;
+    const btnPromise = new Promise((res) => {
+      resolver = res;
+    });
+    document.getElementById(`vpBtnYes${stepN}`).onclick = () => resolver("yes");
+    document.getElementById(`vpBtnNo${stepN}`).onclick = () => resolver("no");
+    const voicePromise = vpListenYesNo(questionText, voiceHint);
+    const ans = await Promise.race([voicePromise, btnPromise]);
+    document.getElementById(`vpBtnYes${stepN}`).onclick = null;
+    document.getElementById(`vpBtnNo${stepN}`).onclick = null;
+    return ans;
+  }
+
+  // Listen for a spoken command WHILE staying inside the flow
+  // (vpFlowActive stays true — poll cannot fire during this wait).
+  // Returns { command, message } on success, or null if cancelled/failed.
+  async function vpListenForCommandInFlow() {
+    if (!SR) return null;
+    vpShowCard(null);
+    vpSetStatus("active", "Speak your command…");
+    vpLiveText.textContent = "Listening for your command…";
+    vpDot.style.visibility = "visible";
+    vpCancelled = false;
+
+    const text = await vpListen("Speak command");
+    vpDot.style.visibility = "hidden";
+
+    if (vpCancelled || !text) {
+      vpSetStatus("idle", "No command heard");
+      return null;
+    }
+
+    vpSetStatus("speaking", "Processing…");
+    try {
+      const res = await fetch("/api/voice_command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        currentCommand = data.command;
+        document.getElementById("commandInput").value = text;
+        const fb = document.getElementById("commandFeedback");
+        if (fb) {
+          fb.textContent = "✓ " + data.message;
+          fb.className = "feedback-box feedback-success";
+        }
+        const cs = document.getElementById("commandStatus");
+        if (cs) {
+          cs.textContent = "▶ Active";
+          cs.className = "status-badge status-active";
+        }
+        await vpSay("Command understood: " + data.message + ". Searching now…");
+        vpSetStatus("active", "Waiting for detection…");
+        return data;
+      } else {
+        await vpSay(
+          data.message || "I could not understand that. Please try again.",
+        );
+        return null;
+      }
+    } catch (err) {
+      await vpSay("Network error. Please try again.");
+      return null;
+    }
+  }
+
+  // After vpPauseDetection, listen for a command then wait for the backend
+  // to deliver a fresh snapshot. vpFlowActive stays true throughout so the
+  // 2-second poll cannot fire and re-enter the flow while we are waiting.
+  // Returns a snapshot object or null on timeout/cancel.
+  async function vpGetFreshSnapshot(oldFilename, timeoutMs = 60000) {
+    // Keep listening for a command until one is accepted
+    while (!vpCancelled) {
+      const cmd = await vpListenForCommandInFlow();
+      if (vpCancelled) return null;
+      if (!cmd) {
+        // Bad command — ask again
+        await vpSay("Sorry, I could not parse that command. Please try again.");
+        continue;
+      }
+      // Command accepted — now wait for backend to deliver a snapshot
+      vpSetStatus("active", "Waiting for detection…");
+      vpLiveText.textContent = "Searching…";
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline && !vpCancelled) {
+        await vpDelay(1200);
+        try {
+          const r = await fetch("/api/pending_snapshot");
+          const data = await r.json();
+          if (
+            data.success &&
+            data.snapshot &&
+            data.snapshot.filename !== oldFilename
+          ) {
+            showSnapshot(data.snapshot.filename);
+            return data.snapshot;
+          }
+        } catch (_) {}
+      }
+      // Timed out waiting — ask for command again
+      await vpSay("I could not detect anyone. Please say your command again.");
+    }
+    return null;
+  }
+
+  /* ====================================================================
+   MAIN VOICE VERIFICATION FLOW
+   ====================================================================
+   Key invariant: vpFlowActive = true for the ENTIRE duration, including
+   while waiting for a fresh command and snapshot after any rejection.
+   This blocks the 2-second poll from firing and prevents re-entry.
+
+   Flow for every scenario:
+     YES path:  Step1 → Step2 → Step3 → finalise
+     NO at S1:  discard, pause detection, listen for command inside flow,
+                wait for new snapshot, go back to Step1
+     NO at S2:  discard, pause detection, listen for command inside flow,
+                wait for new snapshot, go back to Step1
+     NO at S3:  discard, pause detection, listen for command inside flow,
+                wait for new snapshot, go back to Step1
+   In every NO case the operator MUST speak a command and the camera MUST
+   deliver a new snapshot before anything proceeds.
+   ==================================================================== */
+  async function vpRunVerificationFlow(filename, personName, positionDesc, confidence) {
+    if (vpFlowActive) return;
+    vpFlowActive = true;
+    pendingSnapshot = { filename };
+
+    vpWaiting.style.display = "none";
+    vpSteps.classList.add("visible");
+
+    // currentFilename tracks which snapshot we are currently working on.
+    // It is updated each time we get a fresh snapshot after a rejection.
+    let currentFilename   = filename;
+    let currentPerson     = personName;
+    let currentPos        = positionDesc;
+    let currentConfidence = (typeof confidence === "number") ? confidence : null;
+
+    // Outer loop: runs again from Step 1 any time a "no" triggers a retake.
+    // Exits only on finalise (return) or cancel (return).
+    while (!vpCancelled) {
+      const snapUrl = `/api/get_snapshot/${currentFilename}`;
+
+      /* ── STEP 1 — Confirm person identity ── */
+      vpShowCard(1);
+      document.getElementById("vpStep1Img").src = snapUrl;
+      document.getElementById("vpPersonName").value = currentPerson || "";
+      document.getElementById("vpPositionText").textContent = currentPos || "—";
+      updateConfidenceBadge(currentConfidence);
+
+      const ref = currentCommand ? currentCommand.reference_person : "";
+      const mode = currentCommand ? currentCommand.mode : "";
+      const step1Q =
+        mode === "single"
+          ? `I have detected ${currentPerson}. Could you confirm — is this the correct person?`
+          : `I found someone at the detected position near ${ref}. Is this the right person?`;
+
+      const ans1 = await vpAskYesNo(1, step1Q, "Is this the right person?");
+
+      if (!ans1 || ans1 === "no" || vpCancelled) {
+        await vpDiscardFiles(currentFilename);
+        await vpPauseDetection();
+        await vpSay(
+          "Understood. Please say your command and I will search again.",
+        );
+        vpAddMsg("sys", "Waiting for new command…");
+        const fresh = await vpGetFreshSnapshot(currentFilename);
+        if (!fresh || vpCancelled) {
+          vpEndFlow("Cancelled — voice mode closed.", false);
+          return;
+        }
+        currentFilename   = fresh.filename;
+        currentPerson     = fresh.person_name || "Unknown";
+        currentPos        = fresh.position_desc || "";
+        currentConfidence = (fresh.confidence != null) ? fresh.confidence : null;
+        continue; // loop back to Step 1 with the new snapshot
+      }
+
+      /* ── STEP 2 — Snapshot quality check ── */
+      vpShowCard(2);
+      document.getElementById("vpStep2Img").src = snapUrl;
+      document.getElementById("vpStep2Person").textContent =
+        document.getElementById("vpPersonName").value.trim() ||
+        currentPerson ||
+        "Unknown";
+
+      const step2Q =
+        "Please look at the snapshot. Is it clear and well framed? Say YES to generate the sketch, or NO to retake.";
+      const ans2 = await vpAskYesNo(2, step2Q, "Snapshot quality — YES or NO?");
+
+      if (!ans2 || ans2 === "no" || vpCancelled) {
+        await vpDiscardFiles(currentFilename);
+        await vpPauseDetection();
+        await vpSay(
+          "The snapshot was not clear. Please say your command and I will take a fresh one.",
+        );
+        vpAddMsg("sys", "Waiting for new command…");
+        const fresh = await vpGetFreshSnapshot(currentFilename);
+        if (!fresh || vpCancelled) {
+          vpEndFlow("Cancelled — voice mode closed.", false);
+          return;
+        }
+        currentFilename   = fresh.filename;
+        currentPerson     = fresh.person_name || "Unknown";
+        currentPos        = fresh.position_desc || "";
+        currentConfidence = (fresh.confidence != null) ? fresh.confidence : null;
+        continue; // loop back to Step 1 with the new snapshot
+      }
+
+      /* ── STEP 3 — Generate sketch and review ── */
+      const resolvedName =
+        document.getElementById("vpPersonName").value.trim() ||
+        currentPerson ||
+        "Unknown";
+
+      vpShowCard(3);
+      document.getElementById("vpSketchSpinner").style.display = "block";
+      document.getElementById("vpSketchImg").style.display = "none";
+      document.getElementById("vpSketchMsg").style.display = "none";
+      document.getElementById("vpSketchActions").style.display = "none";
+
+      await vpSay("Good. Generating the sketch now — please wait a moment.");
+      vpSetStatus("speaking", "Generating sketch…");
+
+      let sketchOK = false,
+        sketchFilename = null,
+        verifiedFilename = null;
+      try {
+        const res = await fetch("/api/verify_snapshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            temp_filename: currentFilename,
+            person_name: resolvedName,
+            position_desc: currentPos || "",
+            create_sketch: true,
+            company: "AABBCC",
+          }),
+        });
+        const data = await res.json();
+        document.getElementById("vpSketchSpinner").style.display = "none";
+        if (data.success && data.sketch_filename) {
+          sketchFilename = data.sketch_filename;
+          verifiedFilename = data.verified_filename;
+          pendingSnapshot.verified_filename = verifiedFilename;
+          pendingSnapshot.sketch_filename = sketchFilename;
+          const img = document.getElementById("vpSketchImg");
+          img.src = `/api/get_snapshot/${sketchFilename}`;
+          img.style.display = "block";
+          const msg = document.getElementById("vpSketchMsg");
+          msg.textContent = "✓ Sketch generated";
+          msg.className = "sketch-status-msg success";
+          msg.style.display = "block";
+          sketchOK = true;
+        } else {
+          const msg = document.getElementById("vpSketchMsg");
+          msg.textContent = "✗ Sketch generation failed";
+          msg.className = "sketch-status-msg error";
+          msg.style.display = "block";
+        }
+        document.getElementById("vpSketchActions").style.display = "flex";
+      } catch (err) {
+        document.getElementById("vpSketchSpinner").style.display = "none";
+        const msg = document.getElementById("vpSketchMsg");
+        msg.textContent = "✗ Network error";
+        msg.className = "sketch-status-msg error";
+        msg.style.display = "block";
+        document.getElementById("vpSketchActions").style.display = "flex";
+      }
+
+      const step3Q = sketchOK
+        ? `Here is the sketch for ${resolvedName}. Does it look good enough to send to the laser machine? Say YES to finalise, or NO to retake.`
+        : `I could not generate the sketch. Say YES to retake the snapshot, or NO to cancel.`;
+
+      const ans3 = await vpAskYesNo(3, step3Q, "Sketch quality — YES or NO?");
+
+      if (ans3 === "yes" && sketchOK) {
+        /* ── Finalise and send to laser ── */
+        await vpSay(
+          `Excellent. Sketch for ${resolvedName} has been finalised and saved. Sending to the production line.`,
+        );
+        showVpResults(
+          `/api/get_snapshot/${verifiedFilename}`,
+          `/api/get_snapshot/${sketchFilename}`,
+        );
+        await fetch("/api/clear_command_after_finalise", {
+          method: "POST",
+        }).catch(() => {});
+        currentCommand = null;
+        const cs = document.getElementById("commandStatus");
+        if (cs) {
+          cs.textContent = "No command";
+          cs.className = "status-badge";
+        }
+        vpEndFlow("Task complete. Closing voice mode.", true, resolvedName);
+        return;
+      } else {
+        /* ── Sketch rejected — get fresh snapshot, re-run from Step 1 ── */
+        await vpDiscardFiles(currentFilename, verifiedFilename);
+        await vpPauseDetection();
+        await vpSay(
+          "Understood. Please say your command again and I will take a fresh snapshot for a better sketch.",
+        );
+        vpAddMsg("sys", "Waiting for new command…");
+        const fresh = await vpGetFreshSnapshot(currentFilename);
+        if (!fresh || vpCancelled) {
+          vpEndFlow("Cancelled — voice mode closed.", false);
+          return;
+        }
+        currentFilename   = fresh.filename;
+        currentPerson     = fresh.person_name || resolvedName;
+        currentPos        = fresh.position_desc || "";
+        currentConfidence = (fresh.confidence != null) ? fresh.confidence : null;
+        continue; // loop back to Step 1 with the new snapshot
+      }
+    } // end while
+  }
+
+  function showVpResults(snapshotUrl, sketchUrl) {
+    document.getElementById("resSnapshotImg").src = snapshotUrl;
+    document.getElementById("resSketchImg").src = sketchUrl;
+    document.getElementById("resultsPanel").classList.add("visible");
+  }
+
+  document.getElementById("resultsClearBtn").addEventListener("click", () => {
+    document.getElementById("resultsPanel").classList.remove("visible");
+  });
+
+  async function vpEndFlow(message, success, name) {
+    vpFlowActive = false;
+    vpStopListening();
+    await vpDelay(600);
+    vpSetStatus("idle", message);
+    vpAddMsg("sys", message);
+
+    if (success) {
+      await vpDelay(2000);
+      btnModeManual.click();
+      if (name)
+        Utils.notify(`✓ Sketch for ${name} finalised and sent`, "success");
+    } else {
+      // vpPauseDetection was already called before vpEndFlow in all failure paths,
+      // so detection is already stopped. Just restore UI and restart command listening.
+      vpSteps.classList.remove("visible");
+      vpWaiting.style.display = "flex";
+      await vpDelay(600);
+      if (!vpCancelled) {
+        vpSetStatus("active", "Speak your command…");
+        vpStartCommandListen();
+      }
+    }
+  }
+
+  /* ====================================================================
+   AUTO-CROP POLL — picks up server-side crops and routes by mode
+   ==================================================================== */
+  let lastAutoCropFilename = null;
+
+  setInterval(() => {
+    // Don't poll if manual modal is open or voice flow is running
+    if (verificationModal.classList.contains("visible")) return;
+    if (vpFlowActive) return;
+
+    fetch("/api/pending_snapshot")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.success || !data.snapshot) return;
+        const snap = data.snapshot;
+        if (snap.filename === lastAutoCropFilename) return;
+        lastAutoCropFilename = snap.filename;
+
+        showSnapshot(snap.filename);
+
+        if (appMode === "voice") {
+          // Voice mode — run automated flow
+          vpRunVerificationFlow(
+            snap.filename,
+            snap.person_name,
+            snap.position_desc,
+            snap.confidence || null,
+          );
+        } else {
+          // Manual mode — open button-driven modal
+          openVerificationModal(
+            snap.filename,
+            snap.person_name,
+            snap.position_desc,
+          );
+        }
+      })
+      .catch(() => {});
+  }, 2000);
+
+  /* ====================================================================
+   SYSTEM / DETECTION STATUS POLLS
+   ==================================================================== */
+  function checkDatasetStatus() {
+    fetch("/api/system_status")
+      .then((r) => r.json())
+      .then((data) => {
+        document.getElementById("totalPersons").textContent =
+          data.dataset_persons;
+        document.getElementById("totalEmbeddings").textContent =
+          data.embeddings_count;
+        const warn = document.getElementById("noDatasetWarning");
+        const ds = document.getElementById("datasetStatus");
+        if (!data.dataset_persons) {
+          warn.style.display = "flex";
+          ds.textContent = "⚠ No dataset";
+          ds.className = "status-badge status-warning";
+        } else if (!data.embeddings_loaded) {
+          warn.style.display = "flex";
+          ds.textContent = "⚠ No embeddings";
+          ds.className = "status-badge status-warning";
+        } else {
+          warn.style.display = "none";
+          ds.textContent = `✓ ${data.dataset_persons} persons`;
+          ds.className = "status-badge status-success";
+        }
+      })
+      .catch(console.error);
+  }
+  checkDatasetStatus();
+  setInterval(checkDatasetStatus, 10000);
+
+  setInterval(() => {
+    fetch("/api/detection_status")
+      .then((r) => r.json())
+      .then((data) => {
+        const info = data.detection_info || {};
+        document.getElementById("faceCount").textContent =
+          info.total_faces ?? 0;
+        document.getElementById("anchorPerson").textContent =
+          info.anchor_detected
+            ? (currentCommand?.reference_person ?? "-")
+            : "-";
+        document.getElementById("targetFound").textContent =
+          info.target_detected ? "✓ Yes" : "✗ No";
+        updateDetectedFacesList(info.faces);
+      })
+      .catch(console.error);
+  }, 1000);
+
+  function updateDetectedFacesList(faces) {
+    const el = document.getElementById("detectedFaces");
+    if (!faces || !faces.length) {
+      el.innerHTML = '<p class="no-faces">No faces detected</p>';
+      return;
+    }
+    el.innerHTML = faces
+      .map(
+        (f) =>
+          `<div class="face-item"><span class="face-name">${f.name}</span><span class="face-score">${(f.score * 100).toFixed(1)}%</span></div>`,
+      )
+      .join("");
+  }
+</script>
+{% endblock %}
