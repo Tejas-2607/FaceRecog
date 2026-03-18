@@ -2247,132 +2247,262 @@ System{% endblock %} {% block extra_css %}
   /* ────────────────────────────────────────────────────────────────────
    VOICE VERIFICATION FLOW — triggered when pending snapshot arrives
    ──────────────────────────────────────────────────────────────────── */
+  /* ====================================================================
+   HELPERS — used by vpRunVerificationFlow
+   ==================================================================== */
+
+  // Stop all detection on backend: clears command + drains snapshot queue.
+  // Must be called before any wait so no stale crops arrive unexpectedly.
+  async function vpPauseDetection() {
+    await fetch("/api/clear_command", { method: "POST" }).catch(() => {});
+    await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
+    currentCommand = null;
+    const cs = document.getElementById("commandStatus");
+    if (cs) {
+      cs.textContent = "No command";
+      cs.className = "status-badge";
+    }
+    const ci = document.getElementById("commandInput");
+    if (ci) ci.value = "";
+  }
+
+  // Discard one or more snapshot files from disk.
+  async function vpDiscardFiles(...filenames) {
+    for (const fn of filenames.filter(Boolean)) {
+      await fetch("/api/discard_snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: fn }),
+      }).catch(() => {});
+    }
+  }
+
+  // Show one step card, hide the others. Pass null to hide all.
+  function vpShowCard(n) {
+    [1, 2, 3].forEach((i) => {
+      const el = document.getElementById(`vpStep${i}Card`);
+      if (el) el.style.display = i === n ? "" : "none";
+    });
+  }
+
+  // Ask one YES/NO question. Waits for voice OR button — user MUST respond.
+  // Never auto-resolves. Returns "yes", "no", or null (cancelled).
+  async function vpAskYesNo(stepN, questionText, voiceHint) {
+    document.getElementById(`vpStep${stepN}Voice`).textContent = questionText;
+    let resolver;
+    const btnPromise = new Promise((res) => {
+      resolver = res;
+    });
+    document.getElementById(`vpBtnYes${stepN}`).onclick = () => resolver("yes");
+    document.getElementById(`vpBtnNo${stepN}`).onclick = () => resolver("no");
+    const voicePromise = vpListenYesNo(questionText, voiceHint);
+    const ans = await Promise.race([voicePromise, btnPromise]);
+    document.getElementById(`vpBtnYes${stepN}`).onclick = null;
+    document.getElementById(`vpBtnNo${stepN}`).onclick = null;
+    return ans;
+  }
+
+  // Listen for a spoken command WHILE staying inside the flow
+  // (vpFlowActive stays true — poll cannot fire during this wait).
+  // Returns { command, message } on success, or null if cancelled/failed.
+  async function vpListenForCommandInFlow() {
+    if (!SR) return null;
+    vpShowCard(null);
+    vpSetStatus("active", "Speak your command…");
+    vpLiveText.textContent = "Listening for your command…";
+    vpDot.style.visibility = "visible";
+    vpCancelled = false;
+
+    const text = await vpListen("Speak command");
+    vpDot.style.visibility = "hidden";
+
+    if (vpCancelled || !text) {
+      vpSetStatus("idle", "No command heard");
+      return null;
+    }
+
+    vpSetStatus("speaking", "Processing…");
+    try {
+      const res = await fetch("/api/voice_command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        currentCommand = data.command;
+        document.getElementById("commandInput").value = text;
+        const fb = document.getElementById("commandFeedback");
+        if (fb) {
+          fb.textContent = "✓ " + data.message;
+          fb.className = "feedback-box feedback-success";
+        }
+        const cs = document.getElementById("commandStatus");
+        if (cs) {
+          cs.textContent = "▶ Active";
+          cs.className = "status-badge status-active";
+        }
+        await vpSay("Command understood: " + data.message + ". Searching now…");
+        vpSetStatus("active", "Waiting for detection…");
+        return data;
+      } else {
+        await vpSay(
+          data.message || "I could not understand that. Please try again.",
+        );
+        return null;
+      }
+    } catch (err) {
+      await vpSay("Network error. Please try again.");
+      return null;
+    }
+  }
+
+  // After vpPauseDetection, listen for a command then wait for the backend
+  // to deliver a fresh snapshot. vpFlowActive stays true throughout so the
+  // 2-second poll cannot fire and re-enter the flow while we are waiting.
+  // Returns a snapshot object or null on timeout/cancel.
+  async function vpGetFreshSnapshot(oldFilename, timeoutMs = 60000) {
+    // Keep listening for a command until one is accepted
+    while (!vpCancelled) {
+      const cmd = await vpListenForCommandInFlow();
+      if (vpCancelled) return null;
+      if (!cmd) {
+        // Bad command — ask again
+        await vpSay("Sorry, I could not parse that command. Please try again.");
+        continue;
+      }
+      // Command accepted — now wait for backend to deliver a snapshot
+      vpSetStatus("active", "Waiting for detection…");
+      vpLiveText.textContent = "Searching…";
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline && !vpCancelled) {
+        await vpDelay(1200);
+        try {
+          const r = await fetch("/api/pending_snapshot");
+          const data = await r.json();
+          if (
+            data.success &&
+            data.snapshot &&
+            data.snapshot.filename !== oldFilename
+          ) {
+            showSnapshot(data.snapshot.filename);
+            return data.snapshot;
+          }
+        } catch (_) {}
+      }
+      // Timed out waiting — ask for command again
+      await vpSay("I could not detect anyone. Please say your command again.");
+    }
+    return null;
+  }
+
+  /* ====================================================================
+   MAIN VOICE VERIFICATION FLOW
+   ====================================================================
+   Key invariant: vpFlowActive = true for the ENTIRE duration, including
+   while waiting for a fresh command and snapshot after any rejection.
+   This blocks the 2-second poll from firing and prevents re-entry.
+
+   Flow for every scenario:
+     YES path:  Step1 → Step2 → Step3 → finalise
+     NO at S1:  discard, pause detection, listen for command inside flow,
+                wait for new snapshot, go back to Step1
+     NO at S2:  discard, pause detection, listen for command inside flow,
+                wait for new snapshot, go back to Step1
+     NO at S3:  discard, pause detection, listen for command inside flow,
+                wait for new snapshot, go back to Step1
+   In every NO case the operator MUST speak a command and the camera MUST
+   deliver a new snapshot before anything proceeds.
+   ==================================================================== */
   async function vpRunVerificationFlow(filename, personName, positionDesc) {
     if (vpFlowActive) return;
     vpFlowActive = true;
     pendingSnapshot = { filename };
 
-    // Show steps panel
     vpWaiting.style.display = "none";
     vpSteps.classList.add("visible");
 
-    const snapUrl = `/api/get_snapshot/${filename}`;
+    // currentFilename tracks which snapshot we are currently working on.
+    // It is updated each time we get a fresh snapshot after a rejection.
+    let currentFilename = filename;
+    let currentPerson = personName;
+    let currentPos = positionDesc;
 
-    /* ────────────────────────────────────────────────────────────────────
-     STEP 1: Confirm person
-     FIX 1 — "no" discards + resets lock so the SAME person can be
-              re-detected on the very next frame (2nd/3rd/4th position etc.)
-    ──────────────────────────────────────────────────────────────────── */
-    document.getElementById("vpStep1Card").style.display = "";
-    document.getElementById("vpStep2Card").style.display = "none";
-    document.getElementById("vpStep3Card").style.display = "none";
-    document.getElementById("vpStep1Img").src = snapUrl;
-    document.getElementById("vpPersonName").value = personName || "";
-    document.getElementById("vpPositionText").textContent = positionDesc || "—";
+    // Outer loop: runs again from Step 1 any time a "no" triggers a retake.
+    // Exits only on finalise (return) or cancel (return).
+    while (!vpCancelled) {
+      const snapUrl = `/api/get_snapshot/${currentFilename}`;
 
-    const ref  = currentCommand ? currentCommand.reference_person : "";
-    const mode = currentCommand ? currentCommand.mode : "";
-    let step1Q;
-    if (mode === "single") {
-      step1Q = `I have detected ${personName}. Could you confirm — is this the correct person?`;
-    } else {
-      step1Q = `I found someone at the detected position near ${ref}. Is this the right person?`;
-    }
-    document.getElementById("vpStep1Voice").textContent = step1Q;
+      /* ── STEP 1 — Confirm person identity ── */
+      vpShowCard(1);
+      document.getElementById("vpStep1Img").src = snapUrl;
+      document.getElementById("vpPersonName").value = currentPerson || "";
+      document.getElementById("vpPositionText").textContent = currentPos || "—";
 
-    let step1resolve;
-    const step1Promise = new Promise((res) => { step1resolve = res; });
-    document.getElementById("vpBtnYes1").onclick = () => step1resolve("yes");
-    document.getElementById("vpBtnNo1").onclick  = () => step1resolve("no");
+      const ref = currentCommand ? currentCommand.reference_person : "";
+      const mode = currentCommand ? currentCommand.mode : "";
+      const step1Q =
+        mode === "single"
+          ? `I have detected ${currentPerson}. Could you confirm — is this the correct person?`
+          : `I found someone at the detected position near ${ref}. Is this the right person?`;
 
-    let ans1;
-    const voiceAns1 = vpListenYesNo(step1Q, "Is this the right person?");
-    ans1 = await Promise.race([voiceAns1, step1Promise]);
+      const ans1 = await vpAskYesNo(1, step1Q, "Is this the right person?");
 
-    document.getElementById("vpBtnYes1").onclick = null;
-    document.getElementById("vpBtnNo1").onclick  = null;
+      if (!ans1 || ans1 === "no" || vpCancelled) {
+        await vpDiscardFiles(currentFilename);
+        await vpPauseDetection();
+        await vpSay(
+          "Understood. Please say your command and I will search again.",
+        );
+        vpAddMsg("sys", "Waiting for new command…");
+        const fresh = await vpGetFreshSnapshot(currentFilename);
+        if (!fresh || vpCancelled) {
+          vpEndFlow("Cancelled — voice mode closed.", false);
+          return;
+        }
+        currentFilename = fresh.filename;
+        currentPerson = fresh.person_name || "Unknown";
+        currentPos = fresh.position_desc || "";
+        continue; // loop back to Step 1 with the new snapshot
+      }
 
-    if (!ans1 || ans1 === "no" || vpCancelled) {
-      // FIX 1: discard + full reset so the same or next person triggers fresh
-      await fetch("/api/discard_snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename }),
-      }).catch(() => {});
-      await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
-      await vpSay("Understood. I will discard this and look for the next person.");
-      vpEndFlow("Wrong person — ready for next detection.", false);
-      return;
-    }
+      /* ── STEP 2 — Snapshot quality check ── */
+      vpShowCard(2);
+      document.getElementById("vpStep2Img").src = snapUrl;
+      document.getElementById("vpStep2Person").textContent =
+        document.getElementById("vpPersonName").value.trim() ||
+        currentPerson ||
+        "Unknown";
 
-    /* ────────────────────────────────────────────────────────────────────
-     STEP 2: Snapshot quality
-     FIX 2 — "no" resets and re-enters the flow from the BEGINNING
-              (person confirm + quality check) instead of looping forever.
-              The system waits for a fresh snapshot from the backend.
-    ──────────────────────────────────────────────────────────────────── */
-    document.getElementById("vpStep1Card").style.display = "none";
-    document.getElementById("vpStep2Card").style.display = "";
-    document.getElementById("vpStep2Img").src = snapUrl;
-    document.getElementById("vpStep2Person").textContent =
-      document.getElementById("vpPersonName").value.trim() || personName || "Unknown";
+      const step2Q =
+        "Please look at the snapshot. Is it clear and well framed? Say YES to generate the sketch, or NO to retake.";
+      const ans2 = await vpAskYesNo(2, step2Q, "Snapshot quality — YES or NO?");
 
-    let step2resolve;
-    const step2Promise = new Promise((res) => { step2resolve = res; });
-    document.getElementById("vpBtnYes2").onclick = () => step2resolve("yes");
-    document.getElementById("vpBtnNo2").onclick  = () => step2resolve("no");
+      if (!ans2 || ans2 === "no" || vpCancelled) {
+        await vpDiscardFiles(currentFilename);
+        await vpPauseDetection();
+        await vpSay(
+          "The snapshot was not clear. Please say your command and I will take a fresh one.",
+        );
+        vpAddMsg("sys", "Waiting for new command…");
+        const fresh = await vpGetFreshSnapshot(currentFilename);
+        if (!fresh || vpCancelled) {
+          vpEndFlow("Cancelled — voice mode closed.", false);
+          return;
+        }
+        currentFilename = fresh.filename;
+        currentPerson = fresh.person_name || "Unknown";
+        currentPos = fresh.position_desc || "";
+        continue; // loop back to Step 1 with the new snapshot
+      }
 
-    const step2Q = "Please look at the snapshot. Is it clear and well framed? Say YES to continue, or NO to retake.";
-    document.getElementById("vpStep2Voice").textContent = step2Q;
+      /* ── STEP 3 — Generate sketch and review ── */
+      const resolvedName =
+        document.getElementById("vpPersonName").value.trim() ||
+        currentPerson ||
+        "Unknown";
 
-    let ans2;
-    const voiceAns2 = vpListenYesNo(step2Q, "Snapshot quality — YES or NO?");
-    ans2 = await Promise.race([voiceAns2, step2Promise]);
-
-    document.getElementById("vpBtnYes2").onclick = null;
-    document.getElementById("vpBtnNo2").onclick  = null;
-
-    if (!ans2 || ans2 === "no" || vpCancelled) {
-      // FIX 2: discard + full reset → backend will fire a fresh snapshot
-      //        which the poll will pick up and re-enter this function cleanly
-      await fetch("/api/discard_snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename }),
-      }).catch(() => {});
-      await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
-      await vpSay("No problem. I will take a fresh snapshot now.");
-      // Reset UI back to waiting state so the new snapshot triggers normally
-      vpFlowActive = false;
-      vpSteps.classList.remove("visible");
-      vpWaiting.style.display = "flex";
-      vpSetStatus("active", "Taking a fresh snapshot…");
-      // Do NOT call vpEndFlow — that would restart command listening.
-      // Just let the poll pick up the next snapshot from the server.
-      return;
-    }
-
-    /* ────────────────────────────────────────────────────────────────────
-     STEP 3: Generate sketch + review
-     FIX 3 — sketch rejected: only re-ask "is this the right person?"
-              + quality check. Then directly re-generate sketch (no full
-              3-step reset). We loop internally rather than discarding the
-              whole flow.
-     FIX 4 — sketch accepted: clear command so detection doesn't re-fire.
-     FIX 5 — finalise calls /api/reset_snapshot (via clear_command_after_finalise)
-              so the same person CAN be detected again in a new run.
-    ──────────────────────────────────────────────────────────────────── */
-    let resolvedName =
-      document.getElementById("vpPersonName").value.trim() || personName || "Unknown";
-
-    // This loop handles FIX 3: sketch retry = re-confirm person + quality, then regen
-    let sketchAccepted = false;
-    let currentFilename = filename; // may be updated on sketch-retake
-
-    while (!sketchAccepted && !vpCancelled) {
-      /* ── Generate sketch ── */
-      document.getElementById("vpStep2Card").style.display = "none";
-      document.getElementById("vpStep3Card").style.display = "";
+      vpShowCard(3);
       document.getElementById("vpSketchSpinner").style.display = "block";
       document.getElementById("vpSketchImg").style.display = "none";
       document.getElementById("vpSketchMsg").style.display = "none";
@@ -2381,214 +2511,97 @@ System{% endblock %} {% block extra_css %}
       await vpSay("Good. Generating the sketch now — please wait a moment.");
       vpSetStatus("speaking", "Generating sketch…");
 
-      let sketchOK = false, sketchFilename = null, verifiedFilename = null;
+      let sketchOK = false,
+        sketchFilename = null,
+        verifiedFilename = null;
       try {
         const res = await fetch("/api/verify_snapshot", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             temp_filename: currentFilename,
-            person_name:   resolvedName,
-            position_desc: positionDesc || "",
+            person_name: resolvedName,
+            position_desc: currentPos || "",
             create_sketch: true,
-            company:       "AABBCC",
+            company: "AABBCC",
           }),
         });
         const data = await res.json();
         document.getElementById("vpSketchSpinner").style.display = "none";
         if (data.success && data.sketch_filename) {
-          sketchFilename   = data.sketch_filename;
+          sketchFilename = data.sketch_filename;
           verifiedFilename = data.verified_filename;
           pendingSnapshot.verified_filename = verifiedFilename;
-          pendingSnapshot.sketch_filename   = sketchFilename;
+          pendingSnapshot.sketch_filename = sketchFilename;
           const img = document.getElementById("vpSketchImg");
           img.src = `/api/get_snapshot/${sketchFilename}`;
           img.style.display = "block";
           const msg = document.getElementById("vpSketchMsg");
-          msg.textContent  = "✓ Sketch generated";
-          msg.className    = "sketch-status-msg success";
+          msg.textContent = "✓ Sketch generated";
+          msg.className = "sketch-status-msg success";
           msg.style.display = "block";
           sketchOK = true;
         } else {
           const msg = document.getElementById("vpSketchMsg");
-          msg.textContent  = "✗ Sketch generation failed";
-          msg.className    = "sketch-status-msg error";
+          msg.textContent = "✗ Sketch generation failed";
+          msg.className = "sketch-status-msg error";
           msg.style.display = "block";
         }
         document.getElementById("vpSketchActions").style.display = "flex";
       } catch (err) {
         document.getElementById("vpSketchSpinner").style.display = "none";
         const msg = document.getElementById("vpSketchMsg");
-        msg.textContent  = "✗ Network error";
-        msg.className    = "sketch-status-msg error";
+        msg.textContent = "✗ Network error";
+        msg.className = "sketch-status-msg error";
         msg.style.display = "block";
         document.getElementById("vpSketchActions").style.display = "flex";
       }
 
-      /* ── Ask about sketch quality ── */
-      let step3resolve;
-      const step3Promise = new Promise((res) => { step3resolve = res; });
-      document.getElementById("vpBtnYes3").onclick = () => step3resolve("yes");
-      document.getElementById("vpBtnNo3").onclick  = () => step3resolve("no");
-
       const step3Q = sketchOK
         ? `Here is the sketch for ${resolvedName}. Does it look good enough to send to the laser machine? Say YES to finalise, or NO to retake.`
-        : `I could not generate the sketch. Say YES to try a fresh snapshot, or NO to cancel.`;
-      document.getElementById("vpStep3Voice").textContent = step3Q;
+        : `I could not generate the sketch. Say YES to retake the snapshot, or NO to cancel.`;
 
-      let ans3;
-      const voiceAns3 = vpListenYesNo(step3Q, "Sketch quality — YES or NO?");
-      ans3 = await Promise.race([voiceAns3, step3Promise]);
-
-      document.getElementById("vpBtnYes3").onclick = null;
-      document.getElementById("vpBtnNo3").onclick  = null;
+      const ans3 = await vpAskYesNo(3, step3Q, "Sketch quality — YES or NO?");
 
       if (ans3 === "yes" && sketchOK) {
-        /* ── FINALISE ── */
-        sketchAccepted = true;
-        await vpSay(`Excellent. Sketch for ${resolvedName} has been finalised and saved. Sending to the production line.`);
+        /* ── Finalise and send to laser ── */
+        await vpSay(
+          `Excellent. Sketch for ${resolvedName} has been finalised and saved. Sending to the production line.`,
+        );
         showVpResults(
           `/api/get_snapshot/${verifiedFilename}`,
           `/api/get_snapshot/${sketchFilename}`,
         );
-        // FIX 4: clear command so detection doesn't auto-fire again
-        // FIX 5: also resets last_snapshot_person so same person works in next run
-        await fetch("/api/clear_command_after_finalise", { method: "POST" }).catch(() => {});
+        await fetch("/api/clear_command_after_finalise", {
+          method: "POST",
+        }).catch(() => {});
         currentCommand = null;
         const cs = document.getElementById("commandStatus");
-        if (cs) { cs.textContent = "No command"; cs.className = "status-badge"; }
+        if (cs) {
+          cs.textContent = "No command";
+          cs.className = "status-badge";
+        }
         vpEndFlow("Task complete. Closing voice mode.", true, resolvedName);
-
+        return;
       } else {
-        /* ── FIX 3: sketch not accepted — retake snapshot for this person only ──
-           Only re-ask: "is this the person?" + quality check, then re-generate.
-           We do NOT restart command listening or reset the whole flow. */
-        await vpSay("Understood. Let me take a fresh snapshot for a better sketch.");
-
-        // Discard old files
-        const toDelete = [currentFilename];
-        if (verifiedFilename) toDelete.push(verifiedFilename);
-        for (const fn of toDelete) {
-          await fetch("/api/discard_snapshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: fn }),
-          }).catch(() => {});
-        }
-        // Reset lock so backend takes a new snapshot
-        await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
-
-        // Wait for the backend to deliver a fresh snapshot
-        vpSetStatus("active", "Waiting for fresh snapshot…");
-        document.getElementById("vpStep3Card").style.display = "none";
-
-        const freshSnap = await waitForFreshSnapshot(currentFilename);
-        if (!freshSnap || vpCancelled) {
-          vpEndFlow("Could not get a fresh snapshot. Please restart the command.", false);
+        /* ── Sketch rejected — get fresh snapshot, re-run from Step 1 ── */
+        await vpDiscardFiles(currentFilename, verifiedFilename);
+        await vpPauseDetection();
+        await vpSay(
+          "Understood. Please say your command again and I will take a fresh snapshot for a better sketch.",
+        );
+        vpAddMsg("sys", "Waiting for new command…");
+        const fresh = await vpGetFreshSnapshot(currentFilename);
+        if (!fresh || vpCancelled) {
+          vpEndFlow("Cancelled — voice mode closed.", false);
           return;
         }
-
-        currentFilename = freshSnap.filename;
-        resolvedName    = freshSnap.person_name || resolvedName;
-        const newSnapUrl = `/api/get_snapshot/${currentFilename}`;
-
-        // FIX 3: re-ask "is this the person?" (Step 1 mini)
-        document.getElementById("vpStep1Card").style.display = "";
-        document.getElementById("vpStep1Img").src = newSnapUrl;
-        document.getElementById("vpPersonName").value = resolvedName;
-
-        const reconfirmQ = `I have a new snapshot of ${resolvedName}. Is this still the correct person?`;
-        document.getElementById("vpStep1Voice").textContent = reconfirmQ;
-
-        let rc1resolve;
-        const rc1Promise = new Promise((res) => { rc1resolve = res; });
-        document.getElementById("vpBtnYes1").onclick = () => rc1resolve("yes");
-        document.getElementById("vpBtnNo1").onclick  = () => rc1resolve("no");
-
-        let rcAns1;
-        const rcVoice1 = vpListenYesNo(reconfirmQ, "Still the right person?");
-        rcAns1 = await Promise.race([rcVoice1, rc1Promise]);
-
-        document.getElementById("vpBtnYes1").onclick = null;
-        document.getElementById("vpBtnNo1").onclick  = null;
-
-        if (!rcAns1 || rcAns1 === "no" || vpCancelled) {
-          await fetch("/api/discard_snapshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: currentFilename }),
-          }).catch(() => {});
-          await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
-          await vpSay("Understood. Discarding and searching again.");
-          vpEndFlow("Wrong person on retake — ready for next detection.", false);
-          return;
-        }
-
-        // FIX 3: quality check mini
-        document.getElementById("vpStep1Card").style.display = "none";
-        document.getElementById("vpStep2Card").style.display = "";
-        document.getElementById("vpStep2Img").src = newSnapUrl;
-        document.getElementById("vpStep2Person").textContent = resolvedName;
-
-        const rcQ2 = "Is this new snapshot clear and well framed? Say YES to generate sketch, or NO to retake again.";
-        document.getElementById("vpStep2Voice").textContent = rcQ2;
-
-        let rc2resolve;
-        const rc2Promise = new Promise((res) => { rc2resolve = res; });
-        document.getElementById("vpBtnYes2").onclick = () => rc2resolve("yes");
-        document.getElementById("vpBtnNo2").onclick  = () => rc2resolve("no");
-
-        let rcAns2;
-        const rcVoice2 = vpListenYesNo(rcQ2, "Quality OK — YES or NO?");
-        rcAns2 = await Promise.race([rcVoice2, rc2Promise]);
-
-        document.getElementById("vpBtnYes2").onclick = null;
-        document.getElementById("vpBtnNo2").onclick  = null;
-
-        if (!rcAns2 || rcAns2 === "no" || vpCancelled) {
-          await fetch("/api/discard_snapshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: currentFilename }),
-          }).catch(() => {});
-          await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
-          await vpSay("No problem. I will take another fresh snapshot.");
-          // Loop continues — goes back to waiting for fresh snapshot at top of while
-          const nextSnap = await waitForFreshSnapshot(currentFilename);
-          if (!nextSnap || vpCancelled) {
-            vpEndFlow("Could not get a fresh snapshot. Please restart the command.", false);
-            return;
-          }
-          currentFilename = nextSnap.filename;
-          resolvedName    = nextSnap.person_name || resolvedName;
-        }
-        // Loop back to top: generates sketch for currentFilename
-        document.getElementById("vpStep2Card").style.display = "none";
+        currentFilename = fresh.filename;
+        currentPerson = fresh.person_name || resolvedName;
+        currentPos = fresh.position_desc || "";
+        continue; // loop back to Step 1 with the new snapshot
       }
-    }
-  }
-
-  /* ──────────────────────────────────────────────────────────────────────
-   waitForFreshSnapshot — polls /api/pending_snapshot until the backend
-   delivers a new filename (different from the one we just discarded).
-   Times out after 30 s to avoid blocking forever.
-   Used by FIX 2 (quality retry) and FIX 3 (sketch retry).
-  ────────────────────────────────────────────────────────────────────── */
-  async function waitForFreshSnapshot(oldFilename, timeoutMs = 30000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline && !vpCancelled) {
-      await vpDelay(1500);
-      try {
-        const r    = await fetch("/api/pending_snapshot");
-        const data = await r.json();
-        if (data.success && data.snapshot && data.snapshot.filename !== oldFilename) {
-          // Feed it to the regular snapshot display as well
-          showSnapshot(data.snapshot.filename);
-          return data.snapshot;
-        }
-      } catch (_) {}
-    }
-    return null;
+    } // end while
   }
 
   function showVpResults(snapshotUrl, sketchUrl) {
@@ -2609,20 +2622,18 @@ System{% endblock %} {% block extra_css %}
     vpAddMsg("sys", message);
 
     if (success) {
-      // FIX 4+5: command already cleared by clear_command_after_finalise.
-      // Close popup after 2s and return to manual mode — do NOT restart
-      // command listening automatically (operator must issue a new command).
       await vpDelay(2000);
       btnModeManual.click();
-      if (name) Utils.notify(`✓ Sketch for ${name} finalised and sent`, "success");
+      if (name)
+        Utils.notify(`✓ Sketch for ${name} finalised and sent`, "success");
     } else {
-      // Reset snapshot state and restart command listening for next detection
-      await fetch("/api/reset_snapshot", { method: "POST" }).catch(() => {});
+      // vpPauseDetection was already called before vpEndFlow in all failure paths,
+      // so detection is already stopped. Just restore UI and restart command listening.
       vpSteps.classList.remove("visible");
       vpWaiting.style.display = "flex";
       await vpDelay(600);
       if (!vpCancelled) {
-        vpSetStatus("active", "Speak next command…");
+        vpSetStatus("active", "Speak your command…");
         vpStartCommandListen();
       }
     }

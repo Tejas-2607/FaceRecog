@@ -5,12 +5,4 @@
 /snapshots
 /templates1
 /__pycache__
-/sketch_try*.py
 /tempfiles
-sketch_generator2.py
-command_parsing_enhanced*.py
-sketch_generator*.py
-/templates/index*.html
-/templates/base*.html
-/static/js/main*.js
-/app*.py

@@ -20,9 +20,20 @@ ACTION_WORDS = {
     "detect", "find", "identify", "scan", "show", "look",
     "search", "locate", "check", "spot", "see", "get",
     "who", "what", "is", "are", "there",
-    # natural spoken-command words (change 11)
     "take", "grab", "capture", "snap", "photo", "picture",
     "point", "highlight", "can", "could", "would", "please",
+}
+
+# Filler words spoken naturally before the actual command.
+# These are stripped first so the name extractor never sees them.
+# e.g. "hello I want you to detect Aditya" → only "detect Aditya" is parsed
+FILLER_WORDS = {
+    "hello", "hi", "hey", "okay", "ok", "alright", "right",
+    "so", "now", "well", "yes", "yeah", "yep", "please",
+    "i", "want", "you", "me", "us", "we", "they", "them",
+    "need", "like", "do", "did", "will", "go", "make",
+    "tell", "ask", "let", "help", "try",
+    "today", "currently", "quickly", "just", "also",
 }
 
 RIGHT_WORDS = {
@@ -76,8 +87,26 @@ class CommandParser:
         if not command or not command.strip():
             return self._error("Empty command")
 
-        raw   = command.strip()
-        text  = raw.lower()
+        raw = command.strip()
+
+        # ── 0. Strip leading filler words from spoken input ──────────────────
+        # e.g. "hello I want you to detect Aditya"
+        #   → "detect Aditya"
+        # This is done on a lowered word list; the original-case raw is kept
+        # for name extraction later.
+        stripped_words = raw.split()
+        while stripped_words:
+            w_low = stripped_words[0].strip(".,!?;:").lower()
+            if w_low in FILLER_WORDS:
+                stripped_words.pop(0)
+            else:
+                break
+        # Rebuild the working string after filler removal
+        working = " ".join(stripped_words)
+        if not working:
+            return self._error("Command contained only filler words")
+
+        text  = working.lower()
         words = text.split()
 
         # ── 1. Extract position word (first / second / third …) ─────────────
@@ -106,8 +135,8 @@ class CommandParser:
 
         # ── 3. Single-person mode (no direction) ─────────────────────────────
         if direction is None:
-            orig_words = raw.split()
-            name = self._extract_name(orig_words, 0, len(orig_words))
+            orig_words = working.split()
+            name = self._extract_name_smart(orig_words, 0, len(orig_words))
             if not name:
                 return self._error(
                     "Could not identify a person name. "
@@ -123,11 +152,11 @@ class CommandParser:
             }
 
         # ── 4. Directional mode — extract reference person name ───────────────
-        orig_words = raw.split()
+        orig_words = working.split()
         # Prefer tokens after direction word
-        name = self._extract_name(orig_words, dir_index + 1, len(orig_words))
+        name = self._extract_name_smart(orig_words, dir_index + 1, len(orig_words))
         if not name:
-            name = self._extract_name(orig_words, 0, dir_index)
+            name = self._extract_name_smart(orig_words, 0, dir_index)
 
         if not name:
             return self._error(
@@ -145,12 +174,56 @@ class CommandParser:
         }
 
     def _extract_name(self, words: list, start: int, end: int) -> str:
+        """Original extractor — kept for backward compatibility."""
         name_tokens = []
         for w in words[start:end]:
             clean = w.strip(".,!?;:").lower()
             if clean and clean not in ALL_NOISE_WORDS and len(clean) > 1:
                 name_tokens.append(w.strip(".,!?;:"))
         return " ".join(name_tokens) if name_tokens else ""
+
+    def _extract_name_smart(self, words: list, start: int, end: int) -> str:
+        """
+        Smarter name extractor used after filler stripping.
+
+        Strategy:
+          1. Collect all non-noise tokens in the slice.
+          2. Among those, strongly prefer tokens that start with a capital letter
+             (proper nouns / names) — these are almost always the person name.
+          3. If multiple capitalised tokens exist, take the last contiguous run
+             (e.g. "detect Mr John Doe" → "Mr John Doe" → prefer "John Doe").
+          4. Fall back to the original extractor result if no capitals found.
+
+        This means "hello want you detect Aditya" after filler-stripping becomes
+        "detect Aditya" and _extract_name_smart returns "Aditya" rather than
+        "want you Aditya".
+        """
+        # Step 1: collect all non-noise tokens
+        candidates = []
+        for w in words[start:end]:
+            clean = w.strip(".,!?;:").lower()
+            if clean and clean not in ALL_NOISE_WORDS and len(clean) > 1:
+                candidates.append(w.strip(".,!?;:"))
+
+        if not candidates:
+            return ""
+
+        # Step 2: prefer capitalised tokens (proper nouns)
+        capitalised = [t for t in candidates if t[0].isupper()]
+        if capitalised:
+            # Take the last capitalised token(s) — handles "Mr John Doe right of Raj"
+            # where we want only the tokens after the connector keywords
+            # Find the last run of capitalised tokens
+            last_run = [capitalised[-1]]
+            idx = candidates.index(capitalised[-1])
+            # Expand left while the preceding candidate is also capitalised
+            while idx > 0 and candidates[idx-1][0].isupper():
+                idx -= 1
+                last_run.insert(0, candidates[idx])
+            return " ".join(last_run)
+
+        # Step 3: fallback — return all non-noise tokens
+        return " ".join(candidates)
 
     def format_feedback(self, result: dict) -> str:
         if not result.get("valid"):

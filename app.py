@@ -481,10 +481,12 @@ class SystemState:
                         dist = abs(d["center_x"] - anchor_cx)
                         side_faces.append((dist, d))
 
-                # Sort ascending by distance → closest = position 1
-                side_faces.sort(key=lambda t: t[0], reverse=(direction == "right"))
-                # "right" means lower x → sort so closest (largest x < anchor) is first
-                # "left" means higher x → sort so closest (smallest x > anchor) is first
+                # Sort ascending by distance — closest face to the anchor is always
+                # position 1, regardless of direction. The on_side filter above already
+                # ensures only faces on the correct side are included.
+                # Bug fix: previously used reverse=(direction=="right") which incorrectly
+                # placed the furthest face at position 1 when direction is "right".
+                side_faces.sort(key=lambda t: t[0])  # ascending distance, no reverse
 
                 if len(side_faces) >= wanted_pos:
                     _, target_face = side_faces[wanted_pos - 1]
@@ -1023,7 +1025,8 @@ def set_command():
 
 @app.route('/api/clear_command', methods=['POST'])
 def clear_command():
-    state.current_command = None
+    state.current_command       = None
+    state.pending_auto_snapshot = None   # drain any crop already queued
     return jsonify({'success': True, 'message': 'Command cleared'})
 
 @app.route('/api/capture_frame', methods=['POST'])
