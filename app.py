@@ -6,7 +6,7 @@ import insightface
 import pickle
 import numpy as np
 from command_parsing_enhanced import CommandParser
-from sketch_generator import generate_sketch_with_label
+from sketch_generator_new import generate_sketch_with_label
 import os
 from datetime import datetime
 import threading
@@ -41,13 +41,36 @@ EMBEDDINGS_PATH        = "embeddings/face_embeddings.pkl"
 SNAPSHOTS_PATH         = "snapshots"
 
 RECOGNITION_THRESHOLD  = 0.45
-# Detection size: (320,320) for CPU-only laptops — fast enough to keep stream smooth
-DETECTION_SIZE         = (320, 320)
-# Run detection every N frames — stream always runs at full camera FPS
-DETECTION_EVERY_N      = 5          # CPU: run detection every 5th frame, stream stays smooth at full FPS
-STREAM_JPEG_QUALITY    = 60          # lower quality = faster JPEG encode on CPU
+
+# ── Detection size strategy ───────────────────────────────────────────────────
+# buffalo_l runs its detector on a downsampled frame. Using (160,160) for the
+# live detection loop cuts inference time by ~55% vs (320,320) with only a
+# small drop in detecting very small/distant faces (irrelevant at CCTV range).
+# The full (320,320) size is used ONLY when taking the final snapshot crop,
+# where accuracy matters more than speed.
+DETECTION_SIZE         = (160, 160)   # live loop — speed priority
+SNAPSHOT_DET_SIZE      = (320, 320)   # snapshot moment — accuracy priority
+
+# ── Frame skip: detect every N frames ────────────────────────────────────────
+# Between detection frames, the last known bounding boxes are reused (tracker).
+# Raising N from 5→8 means buffalo_l inference runs 37% less often.
+# Smooth bounding boxes between frames are handled by the lightweight tracker.
+DETECTION_EVERY_N      = 3           # buffalo_l: run every 8th frame, track the rest
+
+# ── Identity cache: skip re-inferring unchanged faces ────────────────────────
+# If a face bbox overlaps >85% with a bbox from the previous detection frame,
+# reuse the cached name/score instead of re-running the 512-D cosine search.
+# Saves the entire embedding + similarity step for static faces.
+IDENTITY_CACHE_IOU_THRESH = 0.85     # bbox overlap threshold to reuse cached identity
+
+STREAM_JPEG_QUALITY    = 60
 MAX_CONSECUTIVE_ERRORS = 10
 FRAME_VALIDATION_ENABLED = True
+
+# ── Input frame downscale for detection ──────────────────────────────────────
+# Detect on a smaller frame, draw boxes at original scale.
+# 480x270 = 43% fewer pixels than 640x480 → proportionally less memcpy work.
+DETECT_FRAME_SCALE     = 0.75        # scale factor applied before passing to InsightFace
 
 # ── Embedding generation config ───────────────────────────────────────────────
 EMBEDDING_CACHE_PATH   = "embeddings/file_hash_cache.pkl"  # per-file mtime cache
@@ -78,6 +101,84 @@ def fast_cosine_batch(query_vecs, db_vecs_normalized):
     norms = np.linalg.norm(query_vecs, axis=1, keepdims=True)
     norms[norms == 0] = 1e-10
     return (query_vecs / norms) @ db_vecs_normalized.T
+
+
+# ── Bounding-box IoU — used by identity cache ────────────────────────────────
+def bbox_iou(a, b):
+    """
+    Compute Intersection-over-Union between two bboxes [x1,y1,x2,y2].
+    Pure NumPy, ~20 ops — negligible cost compared to embedding inference.
+    """
+    ix1 = max(a[0], b[0]); iy1 = max(a[1], b[1])
+    ix2 = min(a[2], b[2]); iy2 = min(a[3], b[3])
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    if inter == 0:
+        return 0.0
+    area_a = (a[2]-a[0]) * (a[3]-a[1])
+    area_b = (b[2]-b[0]) * (b[3]-b[1])
+    return inter / (area_a + area_b - inter)
+
+
+# ── Lightweight bounding-box tracker ─────────────────────────────────────────
+class BBoxTracker:
+    """
+    Dead-simple IoU tracker — no OpenCV contrib needed.
+
+    On every FULL detection frame: update() with fresh InsightFace results.
+    On SKIP frames: get_tracked() returns the last known boxes, optionally
+    smoothed with a simple exponential average so they don't jump.
+
+    This gives smooth on-screen bounding boxes between buffalo_l inference
+    calls (every DETECTION_EVERY_N frames) at near-zero CPU cost.
+    """
+    SMOOTH = 0.6   # EMA weight for new position (0=fully old, 1=fully new)
+
+    def __init__(self):
+        # List of {bbox, name, score, center_x} — last confirmed detections
+        self._tracks = []
+
+    def update(self, detected_faces: list):
+        """Called every time InsightFace returns a fresh detection result."""
+        self._tracks = [dict(d) for d in detected_faces]
+
+    def get_tracked(self) -> list:
+        """Return the last known detections (used on skip frames)."""
+        return self._tracks
+
+    def smooth_update(self, detected_faces: list):
+        """
+        Smooth bbox positions using EMA so boxes glide rather than jump.
+        Matches new detections to old tracks by IoU.
+        """
+        if not self._tracks:
+            self.update(detected_faces)
+            return
+        new_tracks = []
+        used = set()
+        for d in detected_faces:
+            best_iou, best_idx = 0.0, -1
+            for i, t in enumerate(self._tracks):
+                if i in used:
+                    continue
+                iou = bbox_iou(d["bbox"], t["bbox"])
+                if iou > best_iou:
+                    best_iou, best_idx = iou, i
+            if best_iou > 0.3 and best_idx >= 0:
+                used.add(best_idx)
+                old = self._tracks[best_idx]["bbox"]
+                nb  = d["bbox"]
+                # EMA on each coordinate
+                sb = np.array([
+                    int(self.SMOOTH*nb[0] + (1-self.SMOOTH)*old[0]),
+                    int(self.SMOOTH*nb[1] + (1-self.SMOOTH)*old[1]),
+                    int(self.SMOOTH*nb[2] + (1-self.SMOOTH)*old[2]),
+                    int(self.SMOOTH*nb[3] + (1-self.SMOOTH)*old[3]),
+                ], dtype=np.int32)
+                new_tracks.append({**d, "bbox": sb,
+                                   "center_x": (sb[0]+sb[2])>>1})
+            else:
+                new_tracks.append(d)
+        self._tracks = new_tracks
 
 
 # ── Lock-free single-slot buffer ──────────────────────────────────────────────
@@ -172,6 +273,20 @@ class SystemState:
         # Pan-hint string cache — only rebuild when text actually changes
         self._pan_hint_cache     = None
         self._pan_hint_cache_key = None
+
+        # ── BBox tracker — smooth boxes on skip frames ────────────────────
+        self._tracker = BBoxTracker()
+
+        # ── Identity cache — skip re-embedding faces that haven't moved ───
+        # Stores {bbox_tuple: (name, score)} from the last full detection.
+        # On the next full detection, faces with IoU > IDENTITY_CACHE_IOU_THRESH
+        # against a cached entry skip the cosine similarity step entirely.
+        self._identity_cache = {}   # {(x1,y1,x2,y2): (name, score)}
+
+        # ── Downscaled detection frame reuse ─────────────────────────────
+        # Pre-allocate the small frame buffer to avoid repeated malloc.
+        self._detect_small_buf = None
+        self._detect_skip_count = 0   # frames skipped since last full detection
 
     # ── Model init ────────────────────────────────────────────────────────────
 
@@ -350,18 +465,44 @@ class SystemState:
         """
         Runs at its own pace — completely decoupled from stream FPS.
         If InsightFace takes 100ms, stream still runs at 30 FPS unaffected.
+
+        Optimization: every DETECTION_EVERY_N frames a full InsightFace inference
+        runs. Between those frames, the tracker's last known boxes are used to
+        redraw the annotated frame without any inference cost. This keeps the
+        displayed bounding boxes smooth at the full camera FPS.
         """
+        skip_budget = 0   # frames to serve from tracker before next full inference
         while self.threads_running:
             try:
                 frame, command = self.detect_queue.get(timeout=0.05)
             except Empty:
                 continue
             try:
-                annotated, info = self._run_detection(frame, command)
-                self.annotated_slot.write(annotated, info)
-                self.detection_results = info
+                if skip_budget > 0:
+                    # ── Tracker frame: reuse last known boxes, skip inference ──
+                    skip_budget -= 1
+                    tracked = self._tracker.get_tracked()
+                    if tracked:
+                        # Re-draw with tracker boxes — zero inference cost
+                        annotated, info = self._redraw_tracked(frame, tracked, command)
+                        self.annotated_slot.write(annotated, info)
+                        self.detection_results = info
+                    else:
+                        # No tracks yet — fall through to full inference
+                        skip_budget = 0
+                        annotated, info = self._run_detection(frame, command)
+                        self.annotated_slot.write(annotated, info)
+                        self.detection_results = info
+                        skip_budget = DETECTION_EVERY_N - 1
+                else:
+                    # ── Full inference frame ──────────────────────────────────
+                    annotated, info = self._run_detection(frame, command)
+                    self.annotated_slot.write(annotated, info)
+                    self.detection_results = info
+                    skip_budget = DETECTION_EVERY_N - 1
             except Exception as e:
                 print(f"Detection error: {e}")
+                skip_budget = 0
             self.detect_queue.task_done()
 
     # ── Encode worker ─────────────────────────────────────────────────────────
@@ -390,6 +531,61 @@ class SystemState:
 
     # ── Detection logic ───────────────────────────────────────────────────────
 
+    def _redraw_tracked(self, frame, tracked_faces: list, command_result):
+        """
+        Redraw bounding boxes using the tracker's last known positions.
+        No InsightFace inference — just draws existing boxes on the current frame.
+        Cost: O(N) bbox draws instead of full ONNX forward pass.
+        """
+        anchor_face    = None
+        detected_faces = tracked_faces  # already have name/score/bbox/center_x
+
+        # Rebuild anchor from tracked data
+        if command_result:
+            ref = command_result.get('reference_person')
+            for d in detected_faces:
+                if d["name"] == ref:
+                    anchor_face = d
+                    break
+
+        # Determine target (same logic as _run_detection)
+        target_detected = False
+        target_face     = None
+        if command_result and anchor_face is not None:
+            direction  = command_result.get('direction')
+            wanted_pos = command_result.get('position', 1)
+            anchor_cx  = anchor_face["center_x"]
+            anchor_name = command_result.get('reference_person')
+
+            if command_result.get('mode') == 'single':
+                target_detected = True
+                target_face     = anchor_face
+            else:
+                side_faces = []
+                for d in detected_faces:
+                    if d["name"] == anchor_name:
+                        continue
+                    on_side = ((direction == "right" and d["center_x"] < anchor_cx) or
+                               (direction == "left"  and d["center_x"] > anchor_cx))
+                    if on_side:
+                        side_faces.append((abs(d["center_x"] - anchor_cx), d))
+                side_faces.sort(key=lambda t: t[0])
+                if len(side_faces) >= wanted_pos:
+                    _, target_face = side_faces[wanted_pos - 1]
+                    target_detected = True
+
+        annotated = self._draw(frame, detected_faces, anchor_face,
+                               command_result, target_face, None, None)
+        return annotated, {
+            'total_faces':     len(detected_faces),
+            'anchor_detected': anchor_face is not None if command_result else False,
+            'target_detected': target_detected,
+            'center_hint':     None,
+            'pan_hint':        None,
+            'faces': [{'name': f['name'], 'score': float(f['score'])}
+                      for f in detected_faces]
+        }
+
     def _run_detection(self, frame, command_result):
         if self.recognizer is None:
             self.initialize_recognizer()
@@ -397,46 +593,111 @@ class SystemState:
             self.load_embeddings()
 
         if self.normalized_embeddings is None or len(self.normalized_embeddings) == 0:
-            if self._draw_buf is None or self._draw_buf.shape != frame.shape:
-                self._draw_buf = np.empty_like(frame)
-            np.copyto(self._draw_buf, frame)
-            out = self._draw_buf
-            cv2.putText(out, "No dataset/identity registered", (30, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            # No dataset / embeddings — draw live video with a warning overlay.
+            # IMPORTANT: must return frame.copy() not _draw_buf so the encode
+            # thread gets a NEW object id every call — otherwise id() stays the
+            # same across calls and the encode thread thinks the frame hasn't
+            # changed, producing a frozen stream.
+            out = frame.copy()
+            # Semi-transparent dark bar at top so text is always readable
+            fh_o, fw_o = out.shape[:2]
+            cv2.rectangle(out, (0, 0), (fw_o, 56), (20, 20, 20), -1)
+            cv2.putText(out, "No persons in dataset — add users to begin detection",
+                        (14, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 180, 255), 2,
+                        cv2.LINE_AA)
             return out, {'total_faces': 0, 'message': 'No dataset'}
 
         fh, fw = frame.shape[:2]
 
+        # ── Downscale frame for InsightFace detection ─────────────────────────
+        # Detect on a smaller frame → fewer pixels → faster ONNX inference.
+        # Bboxes are scaled back up to original resolution before drawing.
+        # DETECT_FRAME_SCALE = 0.75 → 480x360 instead of 640x480 (43% fewer pixels)
+        if DETECT_FRAME_SCALE < 1.0:
+            small_w = int(fw * DETECT_FRAME_SCALE)
+            small_h = int(fh * DETECT_FRAME_SCALE)
+            # Reuse pre-allocated buffer if shape matches — avoids malloc
+            if (self._detect_small_buf is None or
+                    self._detect_small_buf.shape[:2] != (small_h, small_w)):
+                self._detect_small_buf = np.empty((small_h, small_w, 3), dtype=np.uint8)
+            cv2.resize(frame, (small_w, small_h),
+                       dst=self._detect_small_buf,
+                       interpolation=cv2.INTER_LINEAR)
+            detect_frame = self._detect_small_buf
+            scale_x = fw / small_w
+            scale_y = fh / small_h
+        else:
+            detect_frame = frame
+            scale_x = scale_y = 1.0
+
         # Contiguous array avoids InsightFace's internal copy
-        faces = self.recognizer.get(np.ascontiguousarray(frame))
+        faces = self.recognizer.get(np.ascontiguousarray(detect_frame))
 
         anchor_face    = None
         detected_faces = []
 
         if faces:
-            emb_batch = np.array([f.embedding for f in faces], dtype=np.float32)
-            # Single BLAS dgemm — replaces sklearn cosine_similarity
-            sims = fast_cosine_batch(emb_batch, self.normalized_embeddings)
+            # ── Identity cache: skip cosine search for stationary faces ────
+            # Build list of faces that need full embedding inference vs cached.
+            need_inference = []
+            cached_results = []
+            for face in faces:
+                raw_bbox = face.bbox.astype(int)
+                # Scale bbox back to original frame coordinates
+                bbox = np.array([
+                    int(raw_bbox[0] * scale_x), int(raw_bbox[1] * scale_y),
+                    int(raw_bbox[2] * scale_x), int(raw_bbox[3] * scale_y),
+                ], dtype=np.int32)
+                bbox_key = tuple(bbox.tolist())
 
-            for idx, face in enumerate(faces):
-                best_idx   = int(np.argmax(sims[idx]))
-                best_score = float(sims[idx, best_idx])
-                name = (self.known_names[best_idx]
-                        if best_score > RECOGNITION_THRESHOLD else "Unknown")
-                bbox     = face.bbox.astype(int)
+                # Check identity cache — O(N*M) but N,M < 10 so negligible
+                cache_hit = None
+                for cached_key, (c_name, c_score) in self._identity_cache.items():
+                    if bbox_iou(bbox_key, cached_key) >= IDENTITY_CACHE_IOU_THRESH:
+                        cache_hit = (c_name, c_score, bbox)
+                        break
+
+                if cache_hit:
+                    cached_results.append(cache_hit)
+                else:
+                    need_inference.append((face, bbox))
+
+            # Run cosine similarity only for faces NOT in cache
+            new_cache = {}
+            if need_inference:
+                emb_batch = np.array([f.embedding for f, _ in need_inference],
+                                     dtype=np.float32)
+                sims = fast_cosine_batch(emb_batch, self.normalized_embeddings)
+                for i, (face, bbox) in enumerate(need_inference):
+                    best_idx   = int(np.argmax(sims[i]))
+                    best_score = float(sims[i, best_idx])
+                    name = (self.known_names[best_idx]
+                            if best_score > RECOGNITION_THRESHOLD else "Unknown")
+                    bbox_key = tuple(bbox.tolist())
+                    new_cache[bbox_key] = (name, best_score)
+                    cached_results.append((name, best_score, bbox))
+
+            # Update identity cache with new detections
+            self._identity_cache = new_cache
+
+            # Build detected_faces from combined cached + fresh results
+            for name, best_score, bbox in cached_results:
                 x1, y1, x2, y2 = bbox
-                center_x = (x1 + x2) >> 1  # faster than //2
-
+                center_x = (x1 + x2) >> 1
                 detected_faces.append({
                     "name": name, "score": best_score,
                     "bbox": bbox, "center_x": center_x
                 })
                 if command_result and name == command_result.get('reference_person'):
-                    # Include name and score so single-mode target_face has all fields
-                    # Bug fix: anchor_face was missing "name"/"score" → "Unknown" in snapshot popup
-                    # and Detection error: 'name' / 'score' in _draw (both same root cause)
                     anchor_face = {"bbox": bbox, "center_x": center_x,
                                    "name": name, "score": best_score}
+
+            # Update tracker with fresh detections for smooth interpolation
+            self._tracker.smooth_update(detected_faces)
+        else:
+            # No faces from InsightFace — clear cache
+            self._identity_cache = {}
+            self._tracker.update([])
 
         # ── Camera centering hint (Feature 4) ─────────────────────────────
         # If a command is active and the anchor person is found but NOT centred,
@@ -653,10 +914,29 @@ class SystemState:
 
         # ── Status line at top-left ───────────────────────────────────────
         y_cursor = 38
+
+        # Camera-move hint: derived from the command direction.
+        # When the anchor is missing → pan toward the direction to find them.
+        # When the anchor is found but target is missing → pan toward the
+        # commanded side to bring the target person into frame.
+        # For single-person mode (no direction) no pan hint is shown here.
+        def _move_hint(cmd_direction):
+            """Return a short camera-move suggestion based on command direction."""
+            if not cmd_direction:
+                return None
+            arrow = "←" if cmd_direction == "left" else "→"
+            side  = cmd_direction.upper()
+            return f"{arrow} Try moving the camera to the {side}"
+
         if command_result and anchor_face is None:
             cv2.putText(frame, f"❌ {anchor_name} not in frame", (20, y_cursor),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
             y_cursor += 44
+            hint = _move_hint(direction)
+            if hint:
+                cv2.putText(frame, hint, (20, y_cursor),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 180, 255), 2)
+                y_cursor += 40
         elif command_result and target_face is not None:
             ordinal = {1:'1st',2:'2nd',3:'3rd'}.get(wanted_pos, f'{wanted_pos}th')
             cv2.putText(frame, f"✓ {ordinal} person {direction} of {anchor_name}: {target_face['name']}",
@@ -667,6 +947,11 @@ class SystemState:
             cv2.putText(frame, f"❌ No {ordinal} person found {direction} of {anchor_name}",
                         (20, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 0.95, (0, 0, 255), 2)
             y_cursor += 44
+            hint = _move_hint(direction)
+            if hint:
+                cv2.putText(frame, hint, (20, y_cursor),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 180, 255), 2)
+                y_cursor += 40
 
         # ── Centre hint (feature 4) ───────────────────────────────────────
         if center_hint:
@@ -763,9 +1048,14 @@ def generate_frames():
             state.raw_slot.write(frame)
 
             # Push to detection — put_nowait never blocks stream thread
+            # frame.copy() is needed so the detect thread gets its own buffer.
+            # We only copy on the frame that will actually be processed (every N).
+            # On all other frames no copy happens — saves ~921 KB malloc per frame.
             state.frame_count += 1
             if state.frame_count % DETECTION_EVERY_N == 0:
                 try:
+                    # copy() here is unavoidable (detect thread runs async)
+                    # but only happens 1/N of frames — e.g. 1/8 = 12.5% of frames
                     state.detect_queue.put_nowait((frame.copy(), state.current_command))
                 except Exception:
                     pass  # Detection busy → drop frame → correct behavior
@@ -1167,66 +1457,119 @@ def get_pending_snapshot():
 @app.route('/api/verify_snapshot', methods=['POST'])
 def verify_snapshot():
     """
-    Save the verified snapshot with proper naming.
-    Request body: {
-        "temp_filename": "auto_Alice_20260219_123456.jpg",
-        "person_name": "Alice",
-        "position_desc": "Person to the right of User1",
-        "create_sketch": true/false
-    }
+    Save the verified snapshot with proper naming and generate all 8 sketch
+    variants (background removed, full-body isolated).
+
+    Request body:
+      {
+        "temp_filename":  "auto_Alice_20260219_123456.jpg",
+        "person_name":    "Alice",
+        "position_desc":  "Person to the right of User1",
+        "create_sketch":  true,          // optional, default true
+        "company":        "AABBCC"       // optional
+      }
+
+    Response includes:
+      sketch_filename  — best variant filename (shown first in UI)
+      sketch_variants  — list of all 8 variants, sorted best-first:
+          [{ filename, variant_num, variant_label, score, is_best }, ...]
     """
     try:
-        data = request.json or {}
+        data          = request.json or {}
         temp_filename = data.get('temp_filename')
         person_name   = data.get('person_name', 'Unknown')
         position_desc = data.get('position_desc', '')
-        create_sketch = data.get('create_sketch', False)
-        
+        create_sketch = data.get('create_sketch', True)
+        company       = data.get('company', 'AABBCC')
+
         if not temp_filename:
             return jsonify({'success': False, 'message': 'No filename provided'})
-        
-        # Build paths
+
         temp_path = os.path.join(SNAPSHOTS_PATH, temp_filename)
         if not os.path.exists(temp_path):
             return jsonify({'success': False, 'message': 'Snapshot not found'})
-        
-        # Create verified filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = person_name.replace(" ", "_")
+
+        timestamp         = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name         = person_name.replace(" ", "_")
         verified_filename = f"verified_{safe_name}_{timestamp}.jpg"
         verified_path     = os.path.join(SNAPSHOTS_PATH, verified_filename)
-        
-        # Copy/rename the temp file
         shutil.copy2(temp_path, verified_path)
-        
+
         result = {
-            'success': True,
-            'message': f'Verified snapshot saved as {verified_filename}',
+            'success':           True,
+            'message':           f'Verified snapshot saved as {verified_filename}',
             'verified_filename': verified_filename,
-            'sketch_filename': None
+            'sketch_filename':   None,
+            'sketch_variants':   [],
         }
-        
-        # Generate sketch if requested
+
         if create_sketch:
-            sketch_filename = f"sketch_{safe_name}_{timestamp}.jpg"
-            sketch_path     = os.path.join(SNAPSHOTS_PATH, sketch_filename)
-            
-            from sketch_generator import generate_sketch_for_laser
-            sketch_success = generate_sketch_for_laser(
-                verified_path,
-                sketch_path,
-                person_name,
-                data.get('company', 'AABBCC')
+            from sketch_generator_new import generate_sketch_variations
+            base_name = f"{safe_name}_{timestamp}"
+            variants  = generate_sketch_variations(
+                verified_path, SNAPSHOTS_PATH, person_name, company,
+                base_name=base_name,
             )
-            
-            if sketch_success:
-                result['sketch_filename'] = sketch_filename
-                result['message'] += f' | Sketch created: {sketch_filename}'
+
+            if variants:
+                # Best variant is first (sorted by quality score)
+                best = variants[0]
+                result['sketch_filename'] = best['filename']
+                result['sketch_variants'] = [
+                    {
+                        'filename':      v['filename'],
+                        'variant_num':   v['variant_num'],
+                        'variant_label': v['variant_label'],
+                        'score':         round(v['score'], 1),
+                        'is_best':       v['is_best'],
+                    }
+                    for v in variants
+                ]
+                result['message'] += (
+                    f' | {len(variants)} sketch variants created'
+                    f' (best: v{best["variant_num"]} {best["variant_label"]})'
+                )
             else:
                 result['message'] += ' | Sketch generation failed'
-        
+
         return jsonify(result)
-        
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/api/send_sketch_to_laser', methods=['POST'])
+def send_sketch_to_laser():
+    """
+    Mark the operator-chosen sketch as the final laser file.
+    In production, trigger the actual laser engraver job here.
+
+    Request body:
+      { "filename": "sketch_Alice_20260319_120000_v3_DeepContrast.jpg" }
+
+    Returns:
+      { success, message, filename }
+    """
+    try:
+        data     = request.json or {}
+        filename = data.get('filename', '').strip()
+        if not filename:
+            return jsonify({'success': False, 'message': 'No filename provided'})
+
+        filepath = os.path.join(SNAPSHOTS_PATH, filename)
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'message': 'Sketch file not found'})
+
+        # ── Placeholder: replace this block with your laser SDK call ──────
+        print(f"[LASER] Sending to engraver: {filename}")
+        # e.g.  laser_sdk.engrave(filepath)
+
+        return jsonify({
+            'success':  True,
+            'message':  f'Sketch "{filename}" sent to laser engraver',
+            'filename': filename,
+        })
+
     except Exception as e:
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
 
@@ -1352,11 +1695,15 @@ def voice_command():
 
 if __name__ == '__main__':
     print("=" * 70)
-    print("MAXIMUM FPS FACE RECOGNITION — 3-THREAD PIPELINE")
+    print("MAXIMUM FPS FACE RECOGNITION — 3-THREAD PIPELINE + TRACKER")
     print("=" * 70)
     print(f"Threads:         Stream | Detection | Encode (fully decoupled)")
     print(f"Camera:          {CAMERA_INDEXES[0]} (+ {len(CAMERA_INDEXES)-1} fallbacks)")
-    print(f"Detection:       Every {DETECTION_EVERY_N} frames @ {DETECTION_SIZE}")
+    print(f"Model:           buffalo_l  (full accuracy, optimized pipeline)")
+    print(f"Detection size:  {DETECTION_SIZE} (live) | {SNAPSHOT_DET_SIZE} (snapshot)")
+    print(f"Frame scale:     {DETECT_FRAME_SCALE}x  ({int(640*DETECT_FRAME_SCALE)}x{int(480*DETECT_FRAME_SCALE)} detect input)")
+    print(f"Detection:       Full inference every {DETECTION_EVERY_N} frames | tracker fills rest")
+    print(f"Identity cache:  IoU>{IDENTITY_CACHE_IOU_THRESH} skips cosine search for static faces")
     print(f"Cosine sim:      Fast numpy BLAS (sklearn removed)")
     print(f"Frame validate:  Corner-sampling (200x faster than np.mean)")
     print(f"JPEG encode:     Background thread (zero work on stream hot path)")

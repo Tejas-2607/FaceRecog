@@ -1057,49 +1057,6 @@ System{% endblock %} {% block extra_css %}
     background: rgba(100, 116, 139, 0.4);
     color: #fff;
   }
-  /* ── Confidence badge ─────────────────────────────────────────────── */
-  .conf-badge {
-    display: inline-block;
-    padding: 0.3rem 0.75rem;
-    border-radius: 2rem;
-    font-size: 0.82rem;
-    font-weight: 700;
-    margin-top: 0.5rem;
-    letter-spacing: 0.02em;
-  }
-  .conf-high   { background: rgba(16,185,129,0.2); color: #34d399; border: 1px solid rgba(16,185,129,0.4); }
-  .conf-medium { background: rgba(245,158,11,0.2);  color: #fbbf24; border: 1px solid rgba(245,158,11,0.4); }
-  .conf-low    { background: rgba(239,68,68,0.2);   color: #f87171; border: 1px solid rgba(239,68,68,0.4); }
-
-  /* ── Camera status banner ──────────────────────────────────────────── */
-  #cameraErrorBanner {
-    display: none;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1.25rem;
-    background: rgba(239,68,68,0.15);
-    border: 1px solid rgba(239,68,68,0.45);
-    border-radius: 0.6rem;
-    margin-top: 0.75rem;
-    font-size: 0.9rem;
-    color: #f87171;
-    font-weight: 600;
-  }
-  #cameraErrorBanner.visible { display: flex; }
-  #cameraErrorBanner .reconnect-btn {
-    margin-left: auto;
-    padding: 0.35rem 0.9rem;
-    background: rgba(239,68,68,0.2);
-    border: 1px solid rgba(239,68,68,0.5);
-    border-radius: 0.4rem;
-    color: #f87171;
-    cursor: pointer;
-    font-size: 0.82rem;
-    font-weight: 700;
-    transition: all 0.2s;
-  }
-  #cameraErrorBanner .reconnect-btn:hover { background: #ef4444; color: #fff; }
-
 </style>
 {% endblock %} {% block content %}
 <div class="main-layout">
@@ -1110,14 +1067,7 @@ System{% endblock %} {% block extra_css %}
       <div class="status-indicator">
         <span id="datasetStatus" class="status-badge">Loading...</span>
         <span id="commandStatus" class="status-badge">No command</span>
-        <span id="cameraStatus" class="status-badge status-success">📷 Camera OK</span>
       </div>
-    </div>
-
-    <!-- Camera disconnected error banner -->
-    <div id="cameraErrorBanner">
-      <span>📷 Camera disconnected — stream unavailable</span>
-      <button class="reconnect-btn" onclick="manualReconnect()">🔄 Reconnect</button>
     </div>
 
     <!-- MODE TOGGLE — above camera -->
@@ -1487,10 +1437,6 @@ System{% endblock %} {% block extra_css %}
               <div class="vp-info-item">
                 <label>Position</label>
                 <div class="vi-val" id="vpPositionText">—</div>
-              </div>
-              <div class="vp-info-item">
-                <label>Recognition Confidence</label>
-                <span id="vpConfidenceBadge" class="conf-badge conf-medium">—</span>
               </div>
             </div>
           </div>
@@ -2302,70 +2248,6 @@ System{% endblock %} {% block extra_css %}
    VOICE VERIFICATION FLOW — triggered when pending snapshot arrives
    ──────────────────────────────────────────────────────────────────── */
   /* ====================================================================
-   CONFIDENCE BADGE HELPER
-   ==================================================================== */
-  function updateConfidenceBadge(score) {
-    const badge = document.getElementById("vpConfidenceBadge");
-    if (!badge) return;
-    if (score == null) {
-      badge.textContent = "—";
-      badge.className   = "conf-badge conf-medium";
-      return;
-    }
-    const pct = Math.round(score);
-    let cls, label;
-    if (pct >= 80)      { cls = "conf-high";   label = `${pct}% — High`; }
-    else if (pct >= 60) { cls = "conf-medium"; label = `${pct}% — Medium`; }
-    else                { cls = "conf-low";    label = `${pct}% — Low`; }
-    badge.textContent = label;
-    badge.className   = "conf-badge " + cls;
-  }
-
-  /* ====================================================================
-   CAMERA STATUS POLL — checks /api/camera_status every 5 s
-   Shows error banner + updates nav badge when camera disconnects.
-   Hides banner and restores badge when camera comes back.
-   ==================================================================== */
-  function checkCameraStatus() {
-    fetch("/api/camera_status")
-      .then(r => r.json())
-      .then(data => {
-        const badge  = document.getElementById("cameraStatus");
-        const banner = document.getElementById("cameraErrorBanner");
-        if (!badge || !banner) return;
-
-        if (data.status === "ok") {
-          badge.textContent  = "📷 Camera OK";
-          badge.className    = "status-badge status-success";
-          banner.classList.remove("visible");
-        } else if (data.status === "reconnecting") {
-          badge.textContent  = "🔄 Reconnecting…";
-          badge.className    = "status-badge status-warning";
-          banner.classList.add("visible");
-        } else {
-          badge.textContent  = "📷 Camera Error";
-          badge.className    = "status-badge";
-          banner.classList.add("visible");
-        }
-      })
-      .catch(() => {});
-  }
-
-  function manualReconnect() {
-    const badge  = document.getElementById("cameraStatus");
-    const banner = document.getElementById("cameraErrorBanner");
-    if (badge)  { badge.textContent = "🔄 Reconnecting…"; badge.className = "status-badge status-warning"; }
-    fetch("/api/reconnect_camera", { method: "POST" })
-      .then(r => r.json())
-      .then(() => { setTimeout(checkCameraStatus, 2000); })
-      .catch(() => {});
-  }
-
-  // Start camera status polling
-  checkCameraStatus();
-  setInterval(checkCameraStatus, 5000);
-
-  /* ====================================================================
    HELPERS — used by vpRunVerificationFlow
    ==================================================================== */
 
@@ -2532,7 +2414,7 @@ System{% endblock %} {% block extra_css %}
    In every NO case the operator MUST speak a command and the camera MUST
    deliver a new snapshot before anything proceeds.
    ==================================================================== */
-  async function vpRunVerificationFlow(filename, personName, positionDesc, confidence) {
+  async function vpRunVerificationFlow(filename, personName, positionDesc) {
     if (vpFlowActive) return;
     vpFlowActive = true;
     pendingSnapshot = { filename };
@@ -2542,10 +2424,9 @@ System{% endblock %} {% block extra_css %}
 
     // currentFilename tracks which snapshot we are currently working on.
     // It is updated each time we get a fresh snapshot after a rejection.
-    let currentFilename   = filename;
-    let currentPerson     = personName;
-    let currentPos        = positionDesc;
-    let currentConfidence = (typeof confidence === "number") ? confidence : null;
+    let currentFilename = filename;
+    let currentPerson = personName;
+    let currentPos = positionDesc;
 
     // Outer loop: runs again from Step 1 any time a "no" triggers a retake.
     // Exits only on finalise (return) or cancel (return).
@@ -2557,7 +2438,6 @@ System{% endblock %} {% block extra_css %}
       document.getElementById("vpStep1Img").src = snapUrl;
       document.getElementById("vpPersonName").value = currentPerson || "";
       document.getElementById("vpPositionText").textContent = currentPos || "—";
-      updateConfidenceBadge(currentConfidence);
 
       const ref = currentCommand ? currentCommand.reference_person : "";
       const mode = currentCommand ? currentCommand.mode : "";
@@ -2580,10 +2460,9 @@ System{% endblock %} {% block extra_css %}
           vpEndFlow("Cancelled — voice mode closed.", false);
           return;
         }
-        currentFilename   = fresh.filename;
-        currentPerson     = fresh.person_name || "Unknown";
-        currentPos        = fresh.position_desc || "";
-        currentConfidence = (fresh.confidence != null) ? fresh.confidence : null;
+        currentFilename = fresh.filename;
+        currentPerson = fresh.person_name || "Unknown";
+        currentPos = fresh.position_desc || "";
         continue; // loop back to Step 1 with the new snapshot
       }
 
@@ -2611,10 +2490,9 @@ System{% endblock %} {% block extra_css %}
           vpEndFlow("Cancelled — voice mode closed.", false);
           return;
         }
-        currentFilename   = fresh.filename;
-        currentPerson     = fresh.person_name || "Unknown";
-        currentPos        = fresh.position_desc || "";
-        currentConfidence = (fresh.confidence != null) ? fresh.confidence : null;
+        currentFilename = fresh.filename;
+        currentPerson = fresh.person_name || "Unknown";
+        currentPos = fresh.position_desc || "";
         continue; // loop back to Step 1 with the new snapshot
       }
 
@@ -2718,10 +2596,9 @@ System{% endblock %} {% block extra_css %}
           vpEndFlow("Cancelled — voice mode closed.", false);
           return;
         }
-        currentFilename   = fresh.filename;
-        currentPerson     = fresh.person_name || resolvedName;
-        currentPos        = fresh.position_desc || "";
-        currentConfidence = (fresh.confidence != null) ? fresh.confidence : null;
+        currentFilename = fresh.filename;
+        currentPerson = fresh.person_name || resolvedName;
+        currentPos = fresh.position_desc || "";
         continue; // loop back to Step 1 with the new snapshot
       }
     } // end while
@@ -2788,7 +2665,6 @@ System{% endblock %} {% block extra_css %}
             snap.filename,
             snap.person_name,
             snap.position_desc,
-            snap.confidence || null,
           );
         } else {
           // Manual mode — open button-driven modal

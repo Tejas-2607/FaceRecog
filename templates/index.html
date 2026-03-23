@@ -1057,6 +1057,78 @@ System{% endblock %} {% block extra_css %}
     background: rgba(100, 116, 139, 0.4);
     color: #fff;
   }
+
+  /* ══════════════════════════════════════════════════════════════════════
+   SKETCH GALLERY — 8 variants grid (added inside existing Step 3 panels)
+   ══════════════════════════════════════════════════════════════════════ */
+  .sketch-gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+    max-height: 52vh;
+    overflow-y: auto;
+    padding-right: 3px;
+  }
+  .sketch-gallery-grid::-webkit-scrollbar { width: 4px; }
+  .sketch-gallery-grid::-webkit-scrollbar-track { background: rgba(15,23,42,0.4); border-radius: 2px; }
+  .sketch-gallery-grid::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+
+  .sk-card {
+    border: 2px solid #334155;
+    border-radius: 0.55rem;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.18s;
+    background: #0f172a;
+    position: relative;
+  }
+  .sk-card:hover { border-color: #6366f1; transform: translateY(-2px); }
+  .sk-card.sk-selected { border-color: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,0.25); }
+  .sk-card.sk-best { border-color: #f59e0b; }
+  .sk-card img { width: 100%; display: block; aspect-ratio: 3/4; object-fit: cover; background: #fff; }
+  .sk-card-label {
+    padding: 4px 7px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    background: rgba(15,23,42,0.9);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #94a3b8;
+  }
+  .sk-card-label .sk-num { color: #a5b4fc; font-weight: 700; }
+  .sk-ribbon {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    letter-spacing: 0.04em;
+  }
+  .sk-ribbon-best { background: #f59e0b; color: #1c0a00; }
+  .sk-ribbon-selected { background: #10b981; color: #001a0a; top: 5px; left: auto; right: 5px; }
+
+  .sketch-gallery-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+    font-size: 0.78rem;
+    color: #64748b;
+  }
+  .sketch-gallery-header strong { color: #a5b4fc; font-size: 0.82rem; }
+  .sk-selected-badge {
+    font-size: 0.72rem;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: rgba(16,185,129,0.15);
+    border: 1px solid rgba(16,185,129,0.35);
+    color: #34d399;
+    white-space: nowrap;
+  }
 </style>
 {% endblock %} {% block content %}
 <div class="main-layout">
@@ -1118,6 +1190,7 @@ System{% endblock %} {% block extra_css %}
         <div class="res-col">
           <label>✏️ Sketch</label>
           <img id="resSketchImg" src="" alt="Sketch" />
+          <div id="resSketchVariant" style="font-size:0.7rem;color:#64748b;margin-top:0.3rem"></div>
         </div>
       </div>
       <button id="resultsClearBtn">✕ Clear results</button>
@@ -1345,14 +1418,23 @@ System{% endblock %} {% block extra_css %}
     <div class="step-panel" id="stepPanel3">
       <div class="sketch-preview-box">
         <div id="sketchSpinner" class="sketch-status-msg processing">
-          ⏳ Generating sketch…
+          ⏳ Generating 8 sketch variants…
         </div>
+        <!-- Best sketch large preview (shown above gallery) -->
         <img id="sketchPreviewImg" src="" alt="Sketch" style="display: none" />
         <div
           id="sketchStatusMsg"
           class="sketch-status-msg"
           style="display: none"
         ></div>
+        <!-- Gallery of all 8 variants -->
+        <div id="sketchGalleryWrap" style="display:none">
+          <div class="sketch-gallery-header">
+            <strong>Choose a sketch to send to laser:</strong>
+            <span class="sk-selected-badge" id="skSelectedBadge"></span>
+          </div>
+          <div class="sketch-gallery-grid" id="sketchGalleryGrid"></div>
+        </div>
       </div>
       <div
         class="modal-actions"
@@ -1360,7 +1442,7 @@ System{% endblock %} {% block extra_css %}
         style="margin-top: 1rem; display: none"
       >
         <button id="btnSketchGood" class="btn-modal-action btn-save">
-          ✓ Sketch looks good — finalise
+          ✓ Send selected sketch to laser
         </button>
         <button id="btnSketchRetake" class="btn-modal-action btn-discard">
           ↺ Not good enough — retake
@@ -1502,7 +1584,7 @@ System{% endblock %} {% block extra_css %}
           </div>
           <div id="vpSketchBox">
             <div id="vpSketchSpinner" class="sketch-status-msg processing">
-              ⏳ Generating sketch…
+              ⏳ Generating 8 sketch variants…
             </div>
             <img id="vpSketchImg" src="" alt="Sketch" style="display: none" />
             <div
@@ -1510,10 +1592,18 @@ System{% endblock %} {% block extra_css %}
               class="sketch-status-msg"
               style="display: none"
             ></div>
+            <!-- Gallery of all 8 variants (voice popup) -->
+            <div id="vpSketchGalleryWrap" style="display:none">
+              <div class="sketch-gallery-header" style="margin-top:0.5rem">
+                <strong>Select sketch for laser:</strong>
+                <span class="sk-selected-badge" id="vpSkSelectedBadge"></span>
+              </div>
+              <div class="sketch-gallery-grid" id="vpSketchGalleryGrid"></div>
+            </div>
           </div>
           <div class="vp-actions" id="vpSketchActions" style="display: none">
             <button class="vp-btn vp-btn-yes" id="vpBtnYes3">
-              ✓ Send to laser
+              ✓ Send selected to laser
             </button>
             <button class="vp-btn vp-btn-no" id="vpBtnNo3">
               ↺ Retake snapshot
@@ -1908,12 +1998,61 @@ System{% endblock %} {% block extra_css %}
     Utils.notify("Wrong person — ready for next detection", "info");
   });
 
+  /* ── shared gallery state for both manual + voice flows ── */
+  let manualSketchVariants = [];
+  let manualSelectedSketch = null;
+  let vpSketchVariants = [];
+  let vpSelectedSketch = null;
+
+  /* ── render sketch gallery into a grid element ── */
+  function renderSketchGallery(variants, gridEl, badgeEl, onSelect) {
+    gridEl.innerHTML = "";
+    variants.forEach((v, idx) => {
+      const card = document.createElement("div");
+      card.className = "sk-card" + (v.is_best ? " sk-best" : "") + (idx === 0 ? " sk-selected" : "");
+      card.dataset.filename = v.filename;
+
+      if (v.is_best) {
+        card.innerHTML += '<span class="sk-ribbon sk-ribbon-best">★ BEST</span>';
+      }
+      card.innerHTML += `<img src="/api/get_snapshot/${v.filename}" alt="${v.variant_label}" loading="lazy">
+        <div class="sk-card-label"><span class="sk-num">#${v.variant_num}</span><span>${v.variant_label}</span></div>`;
+
+      card.addEventListener("click", () => {
+        gridEl.querySelectorAll(".sk-card").forEach(c => {
+          c.classList.remove("sk-selected");
+          const r = c.querySelector(".sk-ribbon-selected");
+          if (r) r.remove();
+        });
+        card.classList.add("sk-selected");
+        const ribbon = document.createElement("span");
+        ribbon.className = "sk-ribbon sk-ribbon-selected";
+        ribbon.textContent = "✓";
+        card.appendChild(ribbon);
+        badgeEl.textContent = `#${v.variant_num} ${v.variant_label}`;
+        onSelect(v.filename, v);
+      });
+
+      gridEl.appendChild(card);
+    });
+    // pre-select first (best)
+    if (variants.length) badgeEl.textContent = `#${variants[0].variant_num} ${variants[0].variant_label}`;
+  }
+
   document
     .getElementById("btnSnapshotGood")
     .addEventListener("click", async () => {
       if (!pendingSnapshot) return;
-      await manualSay("Good. Generating the sketch now — please wait.");
+      await manualSay("Good. Generating the sketches now — please wait.");
       setStep(3);
+      document.getElementById("sketchSpinner").style.display = "block";
+      document.getElementById("sketchPreviewImg").style.display = "none";
+      document.getElementById("sketchStatusMsg").style.display = "none";
+      document.getElementById("sketchGalleryWrap").style.display = "none";
+      document.getElementById("sketchActions").style.display = "none";
+      manualSketchVariants = [];
+      manualSelectedSketch = null;
+
       const personName =
         document.getElementById("modalPersonName").value.trim() || "Unknown";
       const positionDesc =
@@ -1932,29 +2071,42 @@ System{% endblock %} {% block extra_css %}
         });
         const data = await res.json();
         document.getElementById("sketchSpinner").style.display = "none";
-        if (data.success && data.sketch_filename) {
-          const img = document.getElementById("sketchPreviewImg");
-          img.src = `/api/get_snapshot/${data.sketch_filename}`;
-          img.style.display = "block";
+
+        if (data.success && data.sketch_variants && data.sketch_variants.length) {
+          manualSketchVariants = data.sketch_variants;
+          manualSelectedSketch = manualSketchVariants[0].filename;
           pendingSnapshot.verified_filename = data.verified_filename;
-          pendingSnapshot.sketch_filename = data.sketch_filename;
+          pendingSnapshot.sketch_filename = manualSelectedSketch;
+
+          // Show best as large preview
+          const img = document.getElementById("sketchPreviewImg");
+          img.src = `/api/get_snapshot/${manualSelectedSketch}`;
+          img.style.display = "block";
+
+          // Show gallery
+          const gridEl  = document.getElementById("sketchGalleryGrid");
+          const badgeEl = document.getElementById("skSelectedBadge");
+          renderSketchGallery(manualSketchVariants, gridEl, badgeEl, (fn, v) => {
+            manualSelectedSketch = fn;
+            pendingSnapshot.sketch_filename = fn;
+            // Update large preview
+            document.getElementById("sketchPreviewImg").src = `/api/get_snapshot/${fn}`;
+          });
+          document.getElementById("sketchGalleryWrap").style.display = "block";
+
           const msg = document.getElementById("sketchStatusMsg");
-          msg.textContent = "✓ Sketch generated";
+          msg.textContent = `✓ ${manualSketchVariants.length} sketches generated — best shown first`;
           msg.className = "sketch-status-msg success";
           msg.style.display = "block";
           document.getElementById("sketchActions").style.display = "flex";
-          manualSay(
-            "Here is the sketch. Does it look good enough to send to the laser machine?",
-          );
+          manualSay("Here are the sketch variations. The best one is selected. You can pick a different one, then click Send.");
         } else {
           const msg = document.getElementById("sketchStatusMsg");
           msg.textContent = "✗ Sketch failed — " + (data.message || "");
           msg.className = "sketch-status-msg error";
           msg.style.display = "block";
           document.getElementById("sketchActions").style.display = "flex";
-          manualSay(
-            "I was not able to generate the sketch. Would you like to retake the snapshot?",
-          );
+          manualSay("I was not able to generate the sketch. Would you like to retake the snapshot?");
         }
       } catch (err) {
         document.getElementById("sketchSpinner").style.display = "none";
@@ -1987,11 +2139,35 @@ System{% endblock %} {% block extra_css %}
       if (!pendingSnapshot) return;
       const name =
         document.getElementById("modalPersonName").value.trim() || "Unknown";
+      const fileToSend = manualSelectedSketch || pendingSnapshot.sketch_filename;
+      if (!fileToSend) return;
+
       await manualSay(
-        `Excellent. Sketch for ${name} finalised. Sending to production.`,
+        `Excellent. Sketch for ${name} finalised. Sending to the production line.`,
       );
+
+      // Send to laser
+      await fetch("/api/send_sketch_to_laser", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: fileToSend }),
+      }).catch(() => {});
+
+      await fetch("/api/clear_command_after_finalise", { method: "POST" }).catch(() => {});
+      currentCommand = null;
+      const cs = document.getElementById("commandStatus");
+      if (cs) { cs.textContent = "No command"; cs.className = "status-badge"; }
+
       closeVerificationModal();
-      Utils.notify(`✓ Sketch for ${name} finalised`, "success");
+
+      // Show result in results panel
+      const selectedVariant = manualSketchVariants.find(v => v.filename === fileToSend);
+      showVpResults(
+        `/api/get_snapshot/${pendingSnapshot.verified_filename || pendingSnapshot.filename}`,
+        `/api/get_snapshot/${fileToSend}`,
+        selectedVariant ? `#${selectedVariant.variant_num} ${selectedVariant.variant_label}` : ""
+      );
+      Utils.notify(`✓ Sketch for ${name} finalised and sent`, "success");
     });
 
   document
@@ -2192,11 +2368,16 @@ System{% endblock %} {% block extra_css %}
       vpSetStatus("idle", "No mic support");
       return;
     }
+
+    // Reset state cleanly every time we return to the command-listening phase
     vpFlowActive = false;
+    vpCancelled  = false;
+    vpWaiting.style.display = "flex";
+    vpSteps.classList.remove("visible");
+
     vpSetStatus("active", "Speak your command…");
     vpLiveText.textContent = "Listening for your command…";
     vpDot.style.visibility = "visible";
-    vpCancelled = false;
 
     const text = await vpListen("Speak command");
     vpDot.style.visibility = "hidden";
@@ -2204,42 +2385,100 @@ System{% endblock %} {% block extra_css %}
     if (vpCancelled || !text) {
       vpSetStatus("idle", "No command heard — try again");
       await vpDelay(800);
-      if (!vpCancelled) vpStartCommandListen(); // restart
+      if (!vpCancelled) vpStartCommandListen();
       return;
     }
 
     vpSetStatus("speaking", "Processing…");
-    vpLiveText.textContent = 'Processing: "' + text + '"';
+    vpLiveText.textContent = 'Processing: "' + text + '"…';
 
+    // ── Send command to backend ───────────────────────────────────────
+    let commandData = null;
     try {
       const res = await fetch("/api/voice_command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      const data = await res.json();
-
-      if (data.success) {
-        currentCommand = data.command;
-        document.getElementById("commandInput").value = text;
-        const fb = document.getElementById("commandFeedback");
-        fb.textContent = "✓ " + data.message;
-        fb.className = "feedback-box feedback-success";
-        const cs = document.getElementById("commandStatus");
-        cs.textContent = "▶ Active";
-        cs.className = "status-badge status-active";
-        await vpSay("Command understood: " + data.message + ". Searching now…");
-        vpSetStatus("active", "Waiting for detection…");
-        vpLiveText.textContent = "Searching… speak after detection";
-      } else {
-        await vpSay(
-          data.message ||
-            "I could not understand that command. Please try again.",
-        );
-        if (!vpCancelled) vpStartCommandListen();
-      }
+      commandData = await res.json();
     } catch (err) {
       await vpSay("Network error. Please try again.");
+      if (!vpCancelled) vpStartCommandListen();
+      return;
+    }
+
+    if (!commandData.success) {
+      await vpSay(commandData.message || "I could not understand that command. Please try again.");
+      if (!vpCancelled) vpStartCommandListen();
+      return;
+    }
+
+    // ── Command accepted ──────────────────────────────────────────────
+    currentCommand = commandData.command;
+    document.getElementById("commandInput").value = text;
+    document.getElementById("commandFeedback").textContent = "✓ " + commandData.message;
+    document.getElementById("commandFeedback").className = "feedback-box feedback-success";
+    const cs = document.getElementById("commandStatus");
+    cs.textContent = "▶ Active";
+    cs.className = "status-badge status-active";
+
+    await vpSay("Command understood: " + commandData.message + ". Searching now…");
+    if (vpCancelled) return;
+
+    // ── Actively poll for snapshot at 600 ms ──────────────────────────
+    // The shared 2-second setInterval is a backup; this dedicated loop
+    // catches the snapshot up to 3× faster and is the authoritative source.
+    // If the setInterval fires first (vpFlowActive becomes true), we bail.
+    vpSetStatus("active", "Waiting for detection…");
+    vpAddMsg("sys", "Waiting for camera to detect and lock onto target…");
+
+    const VP_POLL_MS  = 600;
+    const VP_DEADLINE = Date.now() + 60000; // 60-second timeout
+    let   vpSeenFile  = null;
+
+    while (Date.now() < VP_DEADLINE) {
+      // If the shared setInterval already kicked off the flow, step aside
+      if (vpFlowActive || vpCancelled) return;
+
+      await vpDelay(VP_POLL_MS);
+
+      if (vpFlowActive || vpCancelled) return;
+
+      try {
+        const r    = await fetch("/api/pending_snapshot");
+        const snap = await r.json();
+
+        if (snap.success && snap.snapshot && snap.snapshot.filename !== vpSeenFile) {
+          vpSeenFile           = snap.snapshot.filename;
+          lastAutoCropFilename = snap.snapshot.filename; // keep shared tracker in sync
+
+          showSnapshot(snap.snapshot.filename);
+          console.log("[VP] snapshot received →", snap.snapshot.filename,
+                      "person:", snap.snapshot.person_name);
+
+          // Hand off to the verification flow — this sets vpFlowActive = true
+          vpRunVerificationFlow(
+            snap.snapshot.filename,
+            snap.snapshot.person_name,
+            snap.snapshot.position_desc,
+          );
+          return;
+        }
+      } catch (_) { /* network blip — keep polling */ }
+
+      // Animated waiting dots so the operator sees something is happening
+      const dots = ".".repeat(((Date.now() / 600) | 0) % 4 + 1);
+      vpLiveText.textContent = "Searching" + dots;
+    }
+
+    // ── 60-second timeout ─────────────────────────────────────────────
+    if (!vpFlowActive && !vpCancelled) {
+      vpAddMsg("sys", "⏱ Detection timed out — no target found in 60 seconds.");
+      await vpSay("I could not detect anyone within the time limit. Please try your command again.");
+      await fetch("/api/clear_command", { method: "POST" }).catch(() => {});
+      currentCommand = null;
+      cs.textContent = "No command";
+      cs.className   = "status-badge";
       if (!vpCancelled) vpStartCommandListen();
     }
   }
@@ -2376,19 +2615,19 @@ System{% endblock %} {% block extra_css %}
       vpLiveText.textContent = "Searching…";
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline && !vpCancelled) {
-        await vpDelay(1200);
+        await vpDelay(600);
+        if (vpCancelled) break;
         try {
           const r = await fetch("/api/pending_snapshot");
-          const data = await r.json();
-          if (
-            data.success &&
-            data.snapshot &&
-            data.snapshot.filename !== oldFilename
-          ) {
-            showSnapshot(data.snapshot.filename);
-            return data.snapshot;
+          const d = await r.json();
+          if (d.success && d.snapshot && d.snapshot.filename !== oldFilename) {
+            lastAutoCropFilename = d.snapshot.filename; // keep setInterval in sync
+            showSnapshot(d.snapshot.filename);
+            return d.snapshot;
           }
         } catch (_) {}
+        const dots = ".".repeat(((Date.now() / 600) | 0) % 4 + 1);
+        vpLiveText.textContent = "Searching" + dots;
       }
       // Timed out waiting — ask for command again
       await vpSay("I could not detect anyone. Please say your command again.");
@@ -2496,7 +2735,7 @@ System{% endblock %} {% block extra_css %}
         continue; // loop back to Step 1 with the new snapshot
       }
 
-      /* ── STEP 3 — Generate sketch and review ── */
+      /* ── STEP 3 — Generate sketches and review ── */
       const resolvedName =
         document.getElementById("vpPersonName").value.trim() ||
         currentPerson ||
@@ -2506,10 +2745,13 @@ System{% endblock %} {% block extra_css %}
       document.getElementById("vpSketchSpinner").style.display = "block";
       document.getElementById("vpSketchImg").style.display = "none";
       document.getElementById("vpSketchMsg").style.display = "none";
+      document.getElementById("vpSketchGalleryWrap").style.display = "none";
       document.getElementById("vpSketchActions").style.display = "none";
+      vpSketchVariants = [];
+      vpSelectedSketch = null;
 
-      await vpSay("Good. Generating the sketch now — please wait a moment.");
-      vpSetStatus("speaking", "Generating sketch…");
+      await vpSay("Good. Generating the sketches now — please wait a moment.");
+      vpSetStatus("speaking", "Generating sketches…");
 
       let sketchOK = false,
         sketchFilename = null,
@@ -2528,16 +2770,32 @@ System{% endblock %} {% block extra_css %}
         });
         const data = await res.json();
         document.getElementById("vpSketchSpinner").style.display = "none";
-        if (data.success && data.sketch_filename) {
-          sketchFilename = data.sketch_filename;
+
+        if (data.success && data.sketch_variants && data.sketch_variants.length) {
+          vpSketchVariants = data.sketch_variants;
+          vpSelectedSketch = vpSketchVariants[0].filename;
+          sketchFilename = vpSelectedSketch;
           verifiedFilename = data.verified_filename;
           pendingSnapshot.verified_filename = verifiedFilename;
           pendingSnapshot.sketch_filename = sketchFilename;
+
+          // Show best as large preview
           const img = document.getElementById("vpSketchImg");
           img.src = `/api/get_snapshot/${sketchFilename}`;
           img.style.display = "block";
+
+          // Render gallery
+          const gridEl  = document.getElementById("vpSketchGalleryGrid");
+          const badgeEl = document.getElementById("vpSkSelectedBadge");
+          renderSketchGallery(vpSketchVariants, gridEl, badgeEl, (fn, v) => {
+            vpSelectedSketch = fn;
+            pendingSnapshot.sketch_filename = fn;
+            document.getElementById("vpSketchImg").src = `/api/get_snapshot/${fn}`;
+          });
+          document.getElementById("vpSketchGalleryWrap").style.display = "block";
+
           const msg = document.getElementById("vpSketchMsg");
-          msg.textContent = "✓ Sketch generated";
+          msg.textContent = `✓ ${vpSketchVariants.length} sketch variants — best selected`;
           msg.className = "sketch-status-msg success";
           msg.style.display = "block";
           sketchOK = true;
@@ -2558,19 +2816,31 @@ System{% endblock %} {% block extra_css %}
       }
 
       const step3Q = sketchOK
-        ? `Here is the sketch for ${resolvedName}. Does it look good enough to send to the laser machine? Say YES to finalise, or NO to retake.`
+        ? `Here are ${vpSketchVariants.length} sketch variations for ${resolvedName}. The best one is already selected. You can tap another to pick it, then say YES to send to laser, or NO to retake.`
         : `I could not generate the sketch. Say YES to retake the snapshot, or NO to cancel.`;
 
-      const ans3 = await vpAskYesNo(3, step3Q, "Sketch quality — YES or NO?");
+      const ans3 = await vpAskYesNo(3, step3Q, "Sketch — YES to send, NO to retake");
 
       if (ans3 === "yes" && sketchOK) {
-        /* ── Finalise and send to laser ── */
+        /* ── Finalise and send selected sketch to laser ── */
+        const fileToSend = vpSelectedSketch || sketchFilename;
+        const selectedVariant = vpSketchVariants.find(v => v.filename === fileToSend);
+        const variantLabel = selectedVariant ? `#${selectedVariant.variant_num} ${selectedVariant.variant_label}` : "";
+
         await vpSay(
           `Excellent. Sketch for ${resolvedName} has been finalised and saved. Sending to the production line.`,
         );
+
+        await fetch("/api/send_sketch_to_laser", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: fileToSend }),
+        }).catch(() => {});
+
         showVpResults(
           `/api/get_snapshot/${verifiedFilename}`,
-          `/api/get_snapshot/${sketchFilename}`,
+          `/api/get_snapshot/${fileToSend}`,
+          variantLabel,
         );
         await fetch("/api/clear_command_after_finalise", {
           method: "POST",
@@ -2604,9 +2874,11 @@ System{% endblock %} {% block extra_css %}
     } // end while
   }
 
-  function showVpResults(snapshotUrl, sketchUrl) {
+  function showVpResults(snapshotUrl, sketchUrl, variantLabel) {
     document.getElementById("resSnapshotImg").src = snapshotUrl;
     document.getElementById("resSketchImg").src = sketchUrl;
+    const vl = document.getElementById("resSketchVariant");
+    if (vl) vl.textContent = variantLabel ? `Variant: ${variantLabel}` : "";
     document.getElementById("resultsPanel").classList.add("visible");
   }
 
