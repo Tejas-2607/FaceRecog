@@ -14,6 +14,9 @@ import warnings
 import time
 from queue import Queue, Empty
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import urllib.request
+import urllib.error
 
 # pyttsx3 availability check — engine is NOT created here.
 # On Windows, pyttsx3 uses COM which is thread-bound: an engine created on
@@ -39,8 +42,67 @@ CAMERA_INDEXES         = [0, 1, 2, 3, 4, 5, 6]
 DATASET_PATH           = "dataset"
 EMBEDDINGS_PATH        = "embeddings/face_embeddings.pkl"
 SNAPSHOTS_PATH         = "snapshots"
+GCODE_PATH             = "gcode"
 
 RECOGNITION_THRESHOLD  = 0.45
+
+# ── Ollama config ─────────────────────────────────────────────────────────────
+OLLAMA_URL   = "http://localhost:11434/api/chat"
+OLLAMA_MODEL = "phi3"   # change to whichever model you pulled with `ollama pull`
+
+# System prompt — intent-aware sales persona that owns the conversation
+OLLAMA_SYSTEM_PROMPT = """You are VEDA, a warm and confident AI sales assistant running a live demo called "Factory on the Table" — a face-recognition and laser-engraving experience.
+
+YOUR PERSONALITY:
+You are like a skilled human sales person: enthusiastic, empathetic, and impossible to derail. You listen carefully, acknowledge what the person says, and then smoothly guide them back to the next step of the demo. You never sound robotic or scripted — you sound like a real person who genuinely loves this technology and wants to share it.
+
+THE DEMO HAS EXACTLY 5 STEPS — YOU MUST COMPLETE ALL 5 IN ORDER:
+STEP 1 — GREET: Introduce yourself. Get the visitor engaged and excited.
+STEP 2 — POSITION: Ask them to stand in front of the camera. Camera is fixed — they adjust. Confirm they are in frame.
+STEP 3 — NAME: Ask for their name. Use it warmly throughout.
+STEP 4 — EXPLAIN + CONFIRM: Explain what Vision AI will do (photo → sketch → G-code for laser engraver). Get a confirmation to proceed.
+STEP 5 — CAPTURE: Tell them to hold still. Count down 3, 2, 1. The system takes over after this.
+STEP 6 — CLOSE: After the process completes, congratulate them, then invite them to schedule a full team demo.
+
+YOUR MOST IMPORTANT RULE — ALWAYS STEER BACK:
+No matter what the visitor says — questions, jokes, complaints, off-topic remarks, confusion, silence — you ALWAYS:
+1. Acknowledge what they said in one short sentence (so they feel heard).
+2. Give a brief helpful answer if needed.
+3. Immediately bridge back to the current step of the demo with energy.
+
+You never abandon the script. You never let the conversation drift. You are friendly but persistent.
+
+UNDERSTANDING INTENT — NOT JUST KEYWORDS:
+You understand what people MEAN, not just what they say literally. Examples:
+- "let's go", "sounds good", "alright", "cool", "I'm here", "begin", "start it up" → treat as agreement/yes
+- "okay fine", "whatever", "sure why not" → treat as yes
+- "I don't know", "maybe", "hmm" → treat as hesitation — reassure and nudge forward
+- "what is this", "explain", "how does this work" → answer briefly then return to current step
+- "I'm not interested", "this is boring" → acknowledge, pivot to something exciting about the demo, keep going
+- "who are you", "what are you" → answer briefly (you are VEDA, an AI) then redirect
+- Anything that sounds like a greeting or starting intent → move to STEP 2
+- Anything that sounds like they gave their name → capture it and move forward
+- Anything that sounds like "take the photo" or "go ahead" → treat as capture command
+
+HANDLING RESISTANCE:
+- Distracted or bored: "I get it — let me make this worth your time. This next part is actually pretty impressive..."
+- Skeptical: "That's a fair question. Here's what I can tell you right now, and you can judge for yourself..."
+- Privacy concern: "Great question. Everything stays right here on this device — no cloud, no storage, nothing leaves this room."
+- Too busy: "I'll keep it quick — this whole demo takes under two minutes. You'll want to see this."
+- Asking about price/features: "I'd love to get you a proper answer on that — let's finish the demo first and then I'll connect you with the team."
+
+AFTER THE DEMO (SALES CLOSE):
+Congratulate them warmly and personally. Then say something like: "What you just experienced is a tiny slice of what this system can do at scale — real-time multi-person tracking, industrial automation, custom laser workflows. Would you be open to a 20-minute session with our team to see the full picture?" If they say no or maybe, be gracious and offer to leave contact info.
+
+RESPONSE RULES:
+- 1 to 3 sentences maximum per reply. Never longer.
+- Plain spoken English only. No bullet points, no markdown, no lists.
+- Never repeat a phrase you used in the last reply.
+- Always end your reply with either a question that moves the demo forward, OR a clear instruction for what the visitor should do next.
+- Sound like a real enthusiastic human — use contractions, natural rhythm, occasional light humour.
+
+CURRENT DEMO STATE will be indicated in [BRACKETS] in the user message — use it to know which step you are on. Never mention the brackets to the user.
+"""
 
 # ── Detection size strategy ───────────────────────────────────────────────────
 # buffalo_l runs its detector on a downsampled frame. Using (160,160) for the
@@ -87,6 +149,7 @@ PAN_HINT_DEGREES       = [10, 15, 20, 30]  # rotation suggestions when no person
 os.makedirs(DATASET_PATH, exist_ok=True)
 os.makedirs("embeddings", exist_ok=True)
 os.makedirs(SNAPSHOTS_PATH, exist_ok=True)
+os.makedirs(GCODE_PATH, exist_ok=True)
 
 
 # ── Fast cosine similarity — replaces sklearn ─────────────────────────────────
@@ -360,7 +423,7 @@ class SystemState:
                 self.is_speaking = True
                 try:
                     engine = _pyttsx3.init()
-                    engine.setProperty("rate", 160)
+                    engine.setProperty("rate", 220)
                     engine.setProperty("volume", 1.0)
                     engine.say(text)
                     engine.runAndWait()
@@ -455,9 +518,86 @@ class SystemState:
         self.encode_thread = threading.Thread(
             target=self._encode_worker, daemon=True, name="EncodeThread"
         )
+        # Background camera pump — runs continuously so detection works even
+        # when no browser tab has the /video_feed URL open.  This is needed
+        # because the new VEDA UI does not embed the MJPEG stream; it shows
+        # the animated orb instead.  Without this thread the camera would
+        # never start and pending_auto_snapshot would never be populated.
+        self.pump_thread = threading.Thread(
+            target=self._camera_pump, daemon=True, name="CameraPump"
+        )
         self.detect_thread.start()
         self.encode_thread.start()
-        print("✓ Detection + Encode threads started")
+        self.pump_thread.start()
+        print("✓ Detection + Encode + Camera-pump threads started")
+
+    def _camera_pump(self):
+        """
+        Continuously reads frames from the camera and pushes them to the
+        detection pipeline.  Runs even when no client is consuming /video_feed.
+
+        The VEDA UI does not display a live video stream — it shows the orb
+        animation instead — but face detection still needs to run in the
+        background at all times so that pending_auto_snapshot is populated
+        when a command is active.  This thread replaces the role that
+        generate_frames() used to play as the sole source of camera frames.
+        """
+        fallback_params = [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY]
+
+        while self.threads_running:
+            try:
+                camera = self.get_camera()
+                if camera is None:
+                    time.sleep(1.0)
+                    continue
+
+                if not camera.grab():
+                    self.consecutive_errors += 1
+                    if self.consecutive_errors > MAX_CONSECUTIVE_ERRORS:
+                        self.release_camera()
+                    time.sleep(0.03)
+                    continue
+
+                ret, frame = camera.retrieve()
+                if not ret or not self.validate_frame(frame):
+                    self.consecutive_errors += 1
+                    if self.consecutive_errors > MAX_CONSECUTIVE_ERRORS:
+                        self.release_camera()
+                    time.sleep(0.03)
+                    continue
+
+                self.consecutive_errors    = 0
+                self.last_successful_frame = time.time()
+
+                frame = cv2.flip(frame, 1)
+                self.raw_slot.write(frame)
+
+                # Push to detect queue every N frames
+                self.frame_count += 1
+                if self.frame_count % DETECTION_EVERY_N == 0:
+                    try:
+                        self.detect_queue.put_nowait(
+                            (frame.copy(), self.current_command)
+                        )
+                    except Exception:
+                        pass  # detect busy — drop frame, correct behaviour
+
+                # Also encode so /video_feed still works if someone opens it
+                encoded = self.encoded_slot.read()
+                if encoded is not None:
+                    pass  # encode thread handles it
+                else:
+                    ret2, buf = cv2.imencode('.jpg', frame, fallback_params)
+                    if ret2:
+                        self.encoded_slot.write(buf.tobytes())
+
+                # Natural throttle — grab() returns ~30fps, no sleep needed
+                # but a tiny sleep avoids a tight spin if the camera is slow
+                time.sleep(0.001)
+
+            except Exception as e:
+                print(f"Camera pump error: {e}")
+                time.sleep(0.5)
 
     # ── Detection worker ──────────────────────────────────────────────────────
 
@@ -981,103 +1121,70 @@ state = SystemState()
 
 def generate_frames():
     """
-    Stream loop does ONLY:
-      1. camera.grab()       — flush buffer, get latest frame
-      2. camera.retrieve()   — decode frame
-      3. cv2.flip()          — mirror
-      4. slot.write()        — atomic pointer swap (nanoseconds)
-      5. detect_queue.put_nowait() — non-blocking, drops if busy
-      6. encoded_slot.read() — atomic pointer read (nanoseconds)
-      7. yield bytes          — send to browser
+    Serve the annotated MJPEG stream for /video_feed (used by capture.html).
 
-    No JPEG encoding. No face detection. No lock contention.
+    ── KEY DESIGN CHANGE ────────────────────────────────────────────────────
+    This function NO LONGER touches the camera hardware directly.
+    Camera I/O is owned exclusively by _camera_pump (a daemon thread started
+    at server launch).  This function is a pure READER of state.encoded_slot
+    — the JPEG bytes that the encode thread has already prepared.
+
+    Why this matters
+    ─────────────────
+    Previously generate_frames() called camera.grab() + camera.retrieve() on
+    the same cv2.VideoCapture object that _camera_pump uses.  On Windows with
+    DirectShow, two threads grabbing the same VideoCapture simultaneously is
+    not thread-safe — frames are "stolen" from one thread by the other.
+    When /capture was open the stream thread grabbed some frames that the pump
+    needed for detection, causing detection to work only when /capture was open.
+
+    Fix
+    ────
+    _camera_pump is the sole owner of the camera.  generate_frames() waits for
+    encoded_slot to be non-empty (which happens within ~100 ms of server start)
+    then yields the pre-encoded bytes in a tight loop.  The pump + detect +
+    encode pipeline is completely independent of whether any browser tab has
+    /video_feed open.
+    ─────────────────────────────────────────────────────────────────────────
     """
-    camera = state.get_camera()
-    if camera is None:
-        err = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.putText(err, "Camera Error", (50, 240),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        _, buf = cv2.imencode('.jpg', err)
-        yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n'
-        return
-
-    state.start_threads()
-
-    # Pre-build header/footer bytes — avoids any string/bytes ops per frame
     HEADER = b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
     FOOTER = b'\r\n'
 
-    # Fallback encoder only used for very first frames before encode thread warms up
-    fallback_params = [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY]
-    error_cache = None
+    # Wait up to 5 s for the pump to deliver the first frame
+    for _ in range(100):
+        encoded = state.encoded_slot.read()
+        if encoded is not None:
+            break
+        time.sleep(0.05)
+    else:
+        # Pump never delivered a frame — yield a static error image once
+        err = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(err, (0, 0), (640, 60), (20, 0, 0), -1)
+        cv2.putText(err, "Camera not available", (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 220), 2, cv2.LINE_AA)
+        _, buf = cv2.imencode('.jpg', err)
+        yield HEADER + buf.tobytes() + FOOTER
+        return
+
+    prev_bytes = None   # avoid yielding the same frame twice
 
     while True:
         try:
-            # grab() flushes camera buffer and returns immediately if frame ready
-            if not camera.grab():
-                state.consecutive_errors += 1
-                if state.consecutive_errors > MAX_CONSECUTIVE_ERRORS:
-                    print("⚠ Reconnecting...")
-                    camera = state.get_camera()
-                    if camera is None:
-                        time.sleep(0.5)
+            encoded = state.encoded_slot.read()
+
+            if encoded is None or encoded is prev_bytes:
+                # No new frame yet — sleep briefly to avoid busy-spin
+                time.sleep(0.010)
                 continue
 
-            ret, frame = camera.retrieve()
-
-            if not ret or not state.validate_frame(frame):
-                state.consecutive_errors += 1
-                if state.consecutive_errors > MAX_CONSECUTIVE_ERRORS:
-                    camera = state.get_camera()
-                    if camera is None:
-                        time.sleep(0.5)
-                if error_cache is not None:
-                    frame = error_cache.copy()
-                    cv2.putText(frame, "Stream interrupted...", (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-                else:
-                    continue
-            else:
-                state.consecutive_errors    = 0
-                state.last_successful_frame = time.time()
-                error_cache = frame
-
-            frame = cv2.flip(frame, 1)
-
-            # Atomic pointer write — no serialization
-            state.raw_slot.write(frame)
-
-            # Push to detection — put_nowait never blocks stream thread
-            # frame.copy() is needed so the detect thread gets its own buffer.
-            # We only copy on the frame that will actually be processed (every N).
-            # On all other frames no copy happens — saves ~921 KB malloc per frame.
-            state.frame_count += 1
-            if state.frame_count % DETECTION_EVERY_N == 0:
-                try:
-                    # copy() here is unavoidable (detect thread runs async)
-                    # but only happens 1/N of frames — e.g. 1/8 = 12.5% of frames
-                    state.detect_queue.put_nowait((frame.copy(), state.current_command))
-                except Exception:
-                    pass  # Detection busy → drop frame → correct behavior
-
-            # Get pre-encoded bytes from encode thread
-            # Falls back to inline encode for first few frames only
-            encoded = state.encoded_slot.read()
-            if encoded is None:
-                ret2, buf = cv2.imencode('.jpg', frame, fallback_params)
-                if not ret2:
-                    continue
-                encoded = buf.tobytes()
-
+            prev_bytes = encoded
             yield HEADER + encoded + FOOTER
-
-            # No sleep — camera.grab() is the natural throttle
 
         except GeneratorExit:
             break
         except Exception as e:
             print(f"Stream error: {e}")
-            state.consecutive_errors += 1
+            time.sleep(0.05)
 
 
 # ============================================================================
@@ -1278,7 +1385,7 @@ def generate_embeddings_from_dataset():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html')  # VEDA UI
 
 @app.route('/capture')
 def capture_page():
@@ -1690,11 +1797,316 @@ def voice_command():
 
 
 # ============================================================================
+# G-CODE GENERATOR
+# ============================================================================
+
+def _sketch_to_gcode(sketch_path: str, person_name: str,
+                     feed: int = 1000, power: int = 80,
+                     z_engrave: float = 0.0, z_travel: float = 3.0,
+                     scale_mm: float = 80.0) -> str:
+    """
+    Convert a grayscale sketch JPEG into laser G-code using edge contour tracing.
+
+    Strategy
+    --------
+    1. Read sketch, convert to grayscale if needed, threshold to binary.
+    2. Find contours with cv2.findContours — each contour = one closed/open stroke.
+    3. Each contour → a G-code segment:
+         • G0 rapid move to first point (pen-up / laser off)
+         • M3 S{power} — laser on
+         • G1 Fxxx moves along contour points
+         • M5 — laser off at end of segment
+    4. Scale pixel coordinates to mm so the image fits within `scale_mm`.
+
+    Returns the G-code string (not saved to disk — caller saves it).
+    """
+    img_raw = cv2.imread(sketch_path)
+    if img_raw is None:
+        raise FileNotFoundError(f"Cannot read sketch: {sketch_path}")
+
+    # Convert to grayscale, crop away the dark header/footer bars
+    gray = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY) if len(img_raw.shape) == 3 else img_raw
+    h, w = gray.shape
+
+    # Auto-detect header/footer dark bars (pixel rows whose mean < 60)
+    row_means = gray.mean(axis=1)
+    # Find first and last non-dark row
+    top_crop = next((i for i in range(h) if row_means[i] > 60), 0)
+    bot_crop = next((i for i in range(h-1, -1, -1) if row_means[i] > 60), h-1)
+    sketch_body = gray[top_crop:bot_crop+1, :]
+    sh, sw = sketch_body.shape
+
+    # Adaptive threshold → binary (dark strokes become white on black)
+    _, bw = cv2.threshold(sketch_body, 200, 255, cv2.THRESH_BINARY_INV)
+
+    # Morphological cleanup — join nearby stroke fragments
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel)
+
+    # Find external contours only
+    contours, _ = cv2.findContours(bw, cv2.RETR_LIST, cv2.CHAIN_APPROX_TC89_KCOS)
+
+    # Scale factor: fit longest dimension into scale_mm
+    px_to_mm = scale_mm / max(sw, sh, 1)
+
+    lines = [
+        f"; G-code generated by VEDA Face Recognition System",
+        f"; Person: {person_name}",
+        f"; Source: {os.path.basename(sketch_path)}",
+        f"; Feed rate: {feed} mm/min  |  Laser power S{power}/255",
+        f"; Image area: {sw*px_to_mm:.1f} x {sh*px_to_mm:.1f} mm",
+        "",
+        "G21       ; mm mode",
+        "G90       ; absolute coordinates",
+        f"G0 Z{z_travel:.2f}  ; raise to travel height",
+        f"G0 X0 Y0  ; home",
+        "M5        ; laser off",
+        "",
+    ]
+
+    MIN_CONTOUR_PTS = 3   # skip tiny specks
+
+    for cnt in contours:
+        pts = cnt.squeeze()
+        if pts.ndim < 2 or len(pts) < MIN_CONTOUR_PTS:
+            continue
+
+        # First point — rapid travel (laser off)
+        x0 = pts[0][0] * px_to_mm
+        # Flip Y so origin is bottom-left (matches laser coordinate system)
+        y0 = (sh - pts[0][1]) * px_to_mm
+        lines.append(f"G0 Z{z_travel:.2f}")
+        lines.append(f"G0 X{x0:.3f} Y{y0:.3f}")
+        lines.append(f"G0 Z{z_engrave:.2f}")
+        lines.append(f"M3 S{power}  ; laser on")
+        lines.append(f"G1 F{feed}")
+
+        for pt in pts[1:]:
+            xi = pt[0] * px_to_mm
+            yi = (sh - pt[1]) * px_to_mm
+            lines.append(f"G1 X{xi:.3f} Y{yi:.3f}")
+
+        lines.append("M5        ; laser off")
+        lines.append("")
+
+    # End of job
+    lines += [
+        f"G0 Z{z_travel:.2f}",
+        "G0 X0 Y0",
+        "M5",
+        "; END OF JOB",
+    ]
+
+    return "\n".join(lines)
+
+
+@app.route('/api/generate_gcode', methods=['POST'])
+def api_generate_gcode():
+    """
+    Generate G-code from a sketch JPEG and save it to the gcode/ directory.
+
+    Request body:
+      { "filename": "sketch_Alice_..._v3_DeepContrast.jpg",
+        "person_name": "Alice",
+        "feed": 1000,          // optional, mm/min
+        "power": 80,           // optional, S-value 0-255
+        "scale_mm": 80.0       // optional, longest edge in mm
+      }
+
+    Response:
+      { success, gcode_filename, message }
+    """
+    try:
+        data        = request.json or {}
+        filename    = data.get('filename', '').strip()
+        person_name = data.get('person_name', 'Unknown')
+        feed        = int(data.get('feed',  1000))
+        power       = int(data.get('power',  80))
+        scale_mm    = float(data.get('scale_mm', 80.0))
+
+        if not filename:
+            return jsonify({'success': False, 'message': 'No filename provided'})
+
+        sketch_path = os.path.join(SNAPSHOTS_PATH, filename)
+        if not os.path.exists(sketch_path):
+            return jsonify({'success': False, 'message': 'Sketch file not found'})
+
+        gcode_str = _sketch_to_gcode(
+            sketch_path, person_name,
+            feed=feed, power=power, scale_mm=scale_mm
+        )
+
+        base       = os.path.splitext(filename)[0]
+        gcode_name = f"{base}.gcode"
+        gcode_path = os.path.join(GCODE_PATH, gcode_name)
+
+        with open(gcode_path, 'w', encoding='utf-8') as f:
+            f.write(gcode_str)
+
+        line_count = gcode_str.count('\n')
+        print(f"[GCODE] Generated {line_count} lines → {gcode_name}")
+
+        return jsonify({
+            'success':        True,
+            'gcode_filename': gcode_name,
+            'message':        f'G-code generated ({line_count} lines)',
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'G-code error: {str(e)}'})
+
+
+@app.route('/api/get_gcode/<filename>')
+def get_gcode(filename):
+    """Serve a G-code file for download."""
+    fp = os.path.join(GCODE_PATH, filename)
+    if os.path.exists(fp):
+        return send_file(fp, mimetype='text/plain',
+                         as_attachment=True, download_name=filename)
+    return jsonify({'error': 'G-code file not found'}), 404
+
+
+# ============================================================================
+# OLLAMA CHAT  — phi3 powered VEDA conversation + TTS
+# ============================================================================
+
+def _call_ollama(messages: list) -> str:
+    """
+    Call local Ollama /api/chat with streaming=True.
+
+    Streaming means Ollama sends each token as it generates it, so we never
+    hit a timeout waiting for the full reply. We accumulate the chunks and
+    return the complete text once Ollama signals done=true.
+
+    Timeout is per-read (each chunk), not total — so even a slow CPU won't
+    time out as long as Ollama keeps producing tokens.
+    """
+    payload = json.dumps({
+        "model":    OLLAMA_MODEL,
+        "messages": messages,
+        "stream":   True,          # stream tokens — avoids timeout on slow CPUs
+        "options": {
+            "temperature": 0.7,
+            "num_predict": 250,    # keep replies concise
+        }
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+
+    try:
+        # timeout= here is the per-read socket timeout, not total response time.
+        # Each streaming chunk arrives quickly, so 60s per chunk is very generous.
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            full_content = ""
+            for raw_line in resp:
+                line = raw_line.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                chunk = obj.get("message", {}).get("content", "")
+                if chunk:
+                    full_content += chunk
+                if obj.get("done", False):
+                    break
+            return full_content.strip()
+
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Ollama not reachable at {OLLAMA_URL}: {e}") from e
+
+
+@app.route('/api/ollama/chat', methods=['POST'])
+def ollama_chat():
+    """
+    Stateless chat endpoint.
+
+    Body:
+      {
+        "history": [{"role":"user","content":"..."}, ...],   // full conversation so far
+        "message": "the new user message",
+        "speak":   true   // optional — also trigger TTS via pyttsx3
+      }
+
+    Response:
+      { "success": true, "reply": "VEDA's response text" }
+
+    The history should include all prior turns (user + assistant) so that
+    Ollama has full context. The system prompt is prepended automatically.
+    """
+    try:
+        body    = request.json or {}
+        history = body.get("history", [])
+        message = body.get("message", "").strip()
+        do_speak = bool(body.get("speak", True))
+
+        if not message:
+            return jsonify({"success": False, "reply": "", "error": "Empty message"})
+
+        # Build message list: system + history + new user turn
+        messages = [{"role": "system", "content": OLLAMA_SYSTEM_PROMPT}]
+        for turn in history:
+            if turn.get("role") in ("user", "assistant") and turn.get("content"):
+                messages.append({"role": turn["role"], "content": turn["content"]})
+        messages.append({"role": "user", "content": message})
+
+        reply = _call_ollama(messages)   # streaming internally, returns full text
+
+        # Optionally speak the reply via pyttsx3
+        if do_speak and reply:
+            state.speak(reply)
+
+        return jsonify({"success": True, "reply": reply})
+
+    except RuntimeError as e:
+        print(f"[OLLAMA ERROR] {e}")
+        fallback = ("I'm having a little trouble connecting right now. "
+                    "Please give me a moment and try again.")
+        return jsonify({"success": False, "reply": fallback, "error": str(e)})
+    except Exception as e:
+        import traceback
+        print(f"[OLLAMA UNEXPECTED] {traceback.format_exc()}")
+        return jsonify({"success": False, "reply": "Something went wrong.", "error": str(e)})
+
+
+@app.route('/api/ollama/health', methods=['GET'])
+def ollama_health():
+    """
+    Quick check: is Ollama running and is phi3 available?
+    Response: { "online": true/false, "model": "phi3", "error": "..." }
+    """
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/api/tags",
+            method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        models = [m["name"].split(":")[0] for m in data.get("models", [])]
+        model_ok = OLLAMA_MODEL in models or any(OLLAMA_MODEL in m for m in models)
+        return jsonify({
+            "online":    True,
+            "model":     OLLAMA_MODEL,
+            "model_ok":  model_ok,
+            "available": models,
+        })
+    except Exception as e:
+        return jsonify({"online": False, "model": OLLAMA_MODEL, "error": str(e)})
+
+
+# ============================================================================
 # RUN
 # ============================================================================
 
 if __name__ == '__main__':
     print("=" * 70)
+    print("VEDA — Face Recognition System (AABBCC)")
     print("MAXIMUM FPS FACE RECOGNITION — 3-THREAD PIPELINE + TRACKER")
     print("=" * 70)
     print(f"Threads:         Stream | Detection | Encode (fully decoupled)")
@@ -1713,6 +2125,13 @@ if __name__ == '__main__':
 
     state.initialize_recognizer()
     state.load_embeddings()
+
+    # Start the camera pump and detection threads immediately so face detection
+    # runs in the background from the moment the server launches.  The VEDA UI
+    # does not show a video feed, so without this explicit call the threads
+    # would never start and no snapshots would ever be taken.
+    state.start_threads()
+    print("✓ Background camera pump running — detection active")
 
     try:
         from waitress import serve
